@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 from typing import Union, Dict
 import time
+import hashlib
 import pandas as pd
 from google.cloud import bigquery
 import snowflake.connector
@@ -170,7 +171,31 @@ def execute_sql(db_type, db_path, sql, credential):
     if credential is not None:
         args["credential_path"] = credential
     
-    exec_result = get_sql_exec_result(db_type, **args)
+    evidence_run = None
+    operation_id = None
+    try:
+        from core.evidence import current_run, identity
+        evidence_run = current_run()
+        operation_id = identity() if evidence_run else None
+    except Exception:
+        pass
+    sql_ref = hashlib.sha256(sql.encode("utf-8")).hexdigest()
+    if evidence_run:
+        evidence_run.event(
+            "db.started", operation_id=operation_id, db_type=db_type, sql_ref=sql_ref,
+            sql_text=sql if evidence_run.capture_sql else None,
+            sql_text_availability="present" if evidence_run.capture_sql else "disabled",
+        )
+    started_ns = time.monotonic_ns()
+    try:
+        exec_result = get_sql_exec_result(db_type, **args)
+    except BaseException as exc:
+        if evidence_run:
+            evidence_run.event("db.finished", operation_id=operation_id, execution_status="failed",
+                               error_type=type(exc).__name__, fetch_completeness="unknown",
+                               preservation_completeness="unknown",
+                               duration_ns=time.monotonic_ns() - started_ns)
+        raise
     if isinstance(exec_result, tuple):
         if len(exec_result) == 3:
             res, err, _ = exec_result
@@ -183,9 +208,26 @@ def execute_sql(db_type, db_path, sql, credential):
         res = exec_result
         err = None
     if err:
+        if evidence_run:
+            evidence_run.event("db.finished", operation_id=operation_id, execution_status="failed",
+                               error_type="database_error", fetch_completeness="unknown",
+                               preservation_completeness="unknown",
+                               duration_ns=time.monotonic_ns() - started_ns)
         return err
     if res is None or (isinstance(res, pd.DataFrame) and res.empty):
+        if evidence_run:
+            evidence_run.event("db.finished", operation_id=operation_id, execution_status="success",
+                               fetch_completeness="complete", preservation_completeness="complete",
+                               observed_row_count=0, duration_ns=time.monotonic_ns() - started_ns)
         return "No data found for the specified query"
     if isinstance(res, pd.DataFrame):
+        if evidence_run:
+            evidence_run.event("db.finished", operation_id=operation_id, execution_status="success",
+                               fetch_completeness="complete", preservation_completeness="unknown",
+                               observed_row_count=len(res), duration_ns=time.monotonic_ns() - started_ns)
         return str(res)
+    if evidence_run:
+        evidence_run.event("db.finished", operation_id=operation_id, execution_status="success",
+                           fetch_completeness="unknown", preservation_completeness="unknown",
+                           observed_row_count=None, duration_ns=time.monotonic_ns() - started_ns)
     return str(res)

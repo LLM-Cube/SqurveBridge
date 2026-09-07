@@ -4,7 +4,7 @@ Status: ready-for-agent
 Specification: published to local issue tracker
 Decision baseline: Q1–Q28 confirmed; Q28 testing seam confirmed
 
-本规格汇总已确认的 Q1–Q28，按 to-spec 登记为 ready-for-agent。字段矩阵中的未确认实现提案保持其提案属性；本次规格发布不代表运行时代码已实现。
+本规格汇总已确认的 Q1–Q28，按 to-spec 登记为 ready-for-agent。字段矩阵中的未确认实现提案保持其提案属性；规格发布本身不代表所有六个实施切片均已完成。
 
 - [规范性采集契约](../../docs/design/runtime-evidence-contract.md)：已确认原则与 Q8–Q28 规则。
 - [字段矩阵与实施切片](../../docs/design/runtime-evidence-field-matrix.md)：待整体审阅的字段映射、条件、实施次序。

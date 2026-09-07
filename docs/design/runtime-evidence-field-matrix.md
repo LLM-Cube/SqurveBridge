@@ -1,6 +1,6 @@
 # 运行证据字段矩阵与实施切片
 
-Status: proposed-for-review
+Status: common-runtime-implemented; method-specific-adapters-follow-up
 
 依据：[已确认采集契约](runtime-evidence-contract.md)。Q1–Q28 的语义约束已确认；本文将其映射为拟议字段、条件与实施顺序，尚待整体审阅。未标注的实现细节不应被当作已获批准的独立产品决策。
 
@@ -84,4 +84,4 @@ R = REQUIRED；C = CONDITIONAL；O = OPTIONAL；I = OPT_IN。每个 C 字段必�
 
 ## 7. 设计交付与实施边界
 
-当前交付是契约、字段矩阵和实施规格，运行时尚未修改。开始实现前需完成本稿整体审阅、技术参数表及目标仓库/分支确认；公共代码事实以当前 SqurveBridge 为依据，实验性原型遵守 workspace 的私有开发仓库边界。
+当前运行时已实现公共 evidence store、生命周期、候选/调用/DB/producer/merge 记录和离线完整性判定；字段矩阵中标为 C/O/I 的方法专属字段仍需由各 Actor adapter 在实际路径中提供。公共代码事实以当前 SqurveBridge 为依据，实验性原型遵守 workspace 的私有开发仓库边界。

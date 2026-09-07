@@ -121,6 +121,18 @@ class TokenLogger:
         }
         with self._lock:
             self.records.append(record)
+        # Evidence is observational and fail-open; token logging remains usable
+        # when the optional local collector is absent or unavailable.
+        try:
+            from core.evidence import current_run
+            run = current_run()
+            if run is not None:
+                run.event("usage.reported", scope="provider_observation", source="provider_sdk",
+                          logical_call_id=None, attempt_id=None, retry_observability="opaque",
+                          model=model, tag=record["tag"], prompt_tokens=prompt_tokens,
+                          completion_tokens=completion_tokens, total_tokens=total_tokens)
+        except Exception:
+            pass
 
     def total(self) -> Dict[str, int]:
         with self._lock:
