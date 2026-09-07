@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import contextvars
 import hashlib
+import inspect
 import json
 import queue
 import threading
@@ -12,6 +13,7 @@ from contextlib import contextmanager
 from functools import wraps
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping
+from concurrent.futures import ThreadPoolExecutor
 
 SCHEMA_VERSION = 1
 _current: contextvars.ContextVar[EvidenceRun | None] = contextvars.ContextVar("evidence_run", default=None)
@@ -26,6 +28,11 @@ class Availability:
     DISABLED = "disabled"
     COLLECTION_FAILED = "collection_failed"
     REDACTED = "redacted"
+
+
+class ConditionValue:
+    TRUE = "true"
+    FALSE = "false"
     UNKNOWN = "unknown"
 
 
@@ -63,6 +70,22 @@ class AcceptanceProfile(_Profile):
         super().__init__(version, metric_dependencies={k: sorted(v) for k, v in metric_dependencies.items()})
 
 
+DEFAULT_CAPABILITY_PROFILES = [
+    CapabilityProfile(f"{category}-v1", category, fields)
+    for category, fields in {
+        "reducer": {"input_schema_ref": "conditional", "output_schema_ref": "conditional"},
+        "parser": {"input_question_ref": "conditional", "linking_output_ref": "conditional"},
+        "decomposer": {"decomposition_output_ref": "conditional", "plan_to_task_edges": "conditional"},
+        "generator": {"candidate_id": "conditional", "sql_ref": "conditional"},
+        "scaler": {"input_candidate_ids": "conditional", "produced_candidate_ids": "conditional"},
+        "optimizer": {"optimization_attempt_id": "required", "output_candidate_ids": "conditional"},
+        "selector": {"ordered_candidate_pool_ref": "conditional", "selected_candidate_id": "conditional"},
+        "agent": {"chosen_action": "conditional", "child_task_refs": "conditional"},
+        "nest": {"child_operation_refs": "conditional", "branch_events": "conditional"},
+    }.items()
+]
+
+
 def evaluate_metric_dependencies(evidence: Mapping[str, Any], profile: AcceptanceProfile) -> dict[str, dict[str, Any]]:
     """Evaluate each metric independently; unavailable metrics do not erase valid ones."""
     result: dict[str, dict[str, Any]] = {}
@@ -70,9 +93,11 @@ def evaluate_metric_dependencies(evidence: Mapping[str, Any], profile: Acceptanc
         missing = []
         for field in dependencies:
             value = evidence.get(field)
-            if value is None or (isinstance(value, Mapping) and value.get("availability") in {
-                    Availability.UNKNOWN, Availability.DISABLED, Availability.COLLECTION_FAILED,
-                    Availability.REDACTED}):
+            incomplete = isinstance(value, Mapping) and any(
+                value.get(key) in {"partial", "unknown", Availability.COLLECTION_FAILED, Availability.DISABLED}
+                for key in ("availability", "fetch_completeness", "preservation_completeness", "payload_completeness")
+            )
+            if value is None or incomplete:
                 missing.append(field)
         result[metric] = {"status": "unavailable" if missing else "computable", "missing": missing,
                           "profile_version": profile.version}
@@ -83,6 +108,26 @@ def acceptance_gate(metric_results: Mapping[str, Mapping[str, Any]], required_me
     missing = sorted(metric for metric in required_metrics
                      if metric not in metric_results or metric_results[metric].get("status") != "computable")
     return {"accepted": not missing, "missing_required_metrics": missing}
+
+
+def aggregate_usage(events: list[Mapping[str, Any]]) -> dict[str, Any]:
+    """Aggregate non-overlapping reported usage while preserving opaque records."""
+    attempt_records = [e for e in events if e.get("type") == "usage.reported" and e.get("scope") == "attempt"]
+    logical_records = [e for e in events if e.get("type") == "usage.reported" and e.get("scope") == "logical_call"]
+    opaque = [e for e in events if e.get("type") == "usage.reported"
+              and e.get("scope") not in {"attempt", "logical_call"}]
+    attempt_logical_ids = {e.get("logical_call_id") for e in attempt_records if e.get("logical_call_id")}
+    selected = attempt_records + [e for e in logical_records if e.get("logical_call_id") not in attempt_logical_ids]
+    totals: dict[str, int] = {}
+    for event in selected:
+        values = event.get("usage") if isinstance(event.get("usage"), Mapping) else event
+        assert isinstance(values, Mapping)
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens", "input_tokens", "output_tokens"):
+            value = values.get(key)
+            if isinstance(value, int):
+                totals[key] = totals.get(key, 0) + value
+    return {"totals": totals, "selected_records": len(selected), "opaque_records": len(opaque),
+            "complete": not opaque}
 
 
 def identity() -> str:
@@ -113,25 +158,31 @@ class EvidenceRun:
     def __init__(
         self, directory: str | Path, *, run_id: str, sink: Any = None,
         max_bytes: int = 1_048_576, queue_size: int = 128,
+        max_total_bytes: int = 67_108_864,
         write_wait_s: float = 1.0, prior_segment: str | None = None,
-        checkpoint_ref: str | None = None, capture_outputs: bool = False,
+        prior_run_id: str | None = None, checkpoint_ref: str | None = None, capture_outputs: bool = False,
         capture_sql: bool = False,
         capability_profiles: list[CapabilityProfile] | None = None,
         collection_config: CollectionConfig | None = None,
         acceptance_profile: AcceptanceProfile | None = None,
     ):
-        if max_bytes <= 0 or queue_size <= 0 or write_wait_s < 0:
+        if max_bytes <= 0 or max_total_bytes <= 0 or queue_size <= 0 or write_wait_s < 0:
             raise ValueError("invalid_collection_limits")
         self.directory = Path(directory)
         self.run_id = run_id
         self.segment_id = identity()
         self.max_bytes = max_bytes
+        self.max_total_bytes = max_total_bytes
         self.write_wait_s = write_wait_s
         self.capture_outputs = capture_outputs
         self.capture_sql = capture_sql
-        self.capability_profiles = capability_profiles or []
+        self.capability_profiles = list(DEFAULT_CAPABILITY_PROFILES if capability_profiles is None else capability_profiles)
         self.collection_config = collection_config or CollectionConfig()
         self.acceptance_profile = acceptance_profile
+        self.prior_run_id = prior_run_id
+        self.prior_segment = prior_segment
+        self.checkpoint_ref = checkpoint_ref
+        self._candidates_by_sql: dict[str, list[dict[str, Any]]] = {}
         required = set(self.collection_config.values["required_fields"])
         enabled_value = self.collection_config.values["enabled_fields"]
         enabled = set(enabled_value or [])
@@ -144,20 +195,24 @@ class EvidenceRun:
         self._issues: set[str] = set()
         self._lock = threading.Lock()
         self._count = 0
+        self._total_bytes = 0
+        self._observed_fields: set[str] = set()
         self._worker = threading.Thread(target=self._write, daemon=True)
         self._manifest = {
             "schema_version": SCHEMA_VERSION, "run_id": run_id,
             "execution_segment_id": self.segment_id,
-            "prior_segment": prior_segment, "checkpoint_ref": checkpoint_ref,
-            "coverage": {"profile": "common-runtime-v1", "status": "partial",
-                         "unsupported": ["method_specific_actor_facts", "llm_usage", "db_fetch_completeness",
-                                          "producer_lineage", "acceptance_profile"]},
+            "prior_run_id": prior_run_id, "prior_segment": prior_segment, "checkpoint_ref": checkpoint_ref,
+            "coverage": {"profile": "runtime-evidence-v1", "status": "partial",
+                         "supported": ["actor_minimum_facts", "candidate_lineage", "dataset_mutation",
+                                       "task_workflow", "llm_usage", "db_completeness", "offline_acceptance"],
+                         "unsupported": ["provider_hidden_retries", "method_specific_optional_payloads"]},
             "retention": {"output_artifacts": "opt_in" if capture_outputs else "disabled",
                           "sql_text": "opt_in" if capture_sql else "disabled"},
             "profiles": {"capabilities": [p.to_dict() for p in self.capability_profiles],
                          "collection": self.collection_config.to_dict(),
                          "acceptance": acceptance_profile.to_dict() if acceptance_profile else None},
-            "limits": {"max_bytes": max_bytes, "queue_size": queue_size, "write_wait_s": write_wait_s},
+            "limits": {"max_bytes": max_bytes, "max_total_bytes": max_total_bytes,
+                       "queue_size": queue_size, "write_wait_s": write_wait_s},
         }
 
     def _issue(self, reason: str) -> None:
@@ -192,9 +247,19 @@ class EvidenceRun:
                     self._issue("payload_limit")
                     return False
                 chunks.append(part)
-            self._queue.put_nowait((name, b"".join(chunks)))
+            data = b"".join(chunks)
+            with self._lock:
+                exceeded = self._total_bytes + len(data) > self.max_total_bytes
+                if not exceeded:
+                    self._total_bytes += len(data)
+            if exceeded:
+                self._issue("run_size_limit")
+                return False
+            self._queue.put_nowait((name, data))
             return True
         except queue.Full:
+            with self._lock:
+                self._total_bytes = max(0, self._total_bytes - len(data))
             self._issue("queue_limit")
         except Exception:
             self._issue("serialization_failed")
@@ -202,10 +267,29 @@ class EvidenceRun:
 
     def _enqueue_bytes(self, name: str, data: bytes) -> bool:
         try:
+            with self._lock:
+                exceeded = self._total_bytes + len(data) > self.max_total_bytes
+                if not exceeded:
+                    self._total_bytes += len(data)
+            if exceeded:
+                self._issue("run_size_limit")
+                return False
             self._queue.put_nowait((name, data))
             return True
         except queue.Full:
+            with self._lock:
+                self._total_bytes = max(0, self._total_bytes - len(data))
             self._issue("queue_limit")
+            return False
+
+    def _enqueue_control(self, name: str, value: Any) -> bool:
+        try:
+            data = json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True).encode("utf-8")
+            if len(data) > self.max_bytes:
+                return False
+            self._queue.put_nowait((name, data))
+            return True
+        except (TypeError, ValueError, queue.Full):
             return False
 
     def event(self, kind: str, **facts: Any) -> str | None:
@@ -219,6 +303,7 @@ class EvidenceRun:
         if self._enqueue(f"segments/{self.segment_id}/events/{event_id}.json", record):
             with self._lock:
                 self._count += 1
+                self._observed_fields.update(facts)
             return event_id
         return None
 
@@ -241,10 +326,34 @@ class EvidenceRun:
             self._issue("artifact_serialization_failed")
         return None
 
+    def value_ref(self, value: Any) -> str | None:
+        """Return a bounded content identity without retaining the payload."""
+        digest = hashlib.sha256()
+        size = 0
+        try:
+            for chunk in json.JSONEncoder(ensure_ascii=False, allow_nan=False, sort_keys=True).iterencode(value):
+                part = chunk.encode("utf-8")
+                size += len(part)
+                if size > self.max_bytes:
+                    return None
+                digest.update(part)
+            return digest.hexdigest()
+        except Exception:
+            return None
+
     def field(self, name: str, availability: str, *, condition: str | None = None,
               value_ref: str | None = None) -> str | None:
+        if availability == Availability.PRESENT:
+            self._observed_fields.add(name)
         return self.event("field.availability", field=name, availability=availability,
                           condition=condition, value_ref=value_ref)
+
+    def condition(self, name: str, value: str, *, basis_refs: list[str] | None = None) -> str | None:
+        if value not in {ConditionValue.TRUE, ConditionValue.FALSE, ConditionValue.UNKNOWN}:
+            raise ValueError("invalid_condition_value")
+        if value == ConditionValue.UNKNOWN:
+            self._issue("condition_unknown")
+        return self.event("condition.evaluated", condition=name, value=value, basis_refs=basis_refs or [])
 
     def candidate(self, sql_text: str, *, producer_span_id: str | None = None,
                   parent_candidate_id: str | None = None) -> dict[str, Any]:
@@ -253,7 +362,18 @@ class EvidenceRun:
         self.event("candidate.created", candidate_occurrence_id=occurrence_id, sql_ref=content_ref,
                    sql_text=sql_text, producer_span_id=producer_span_id,
                    parent_candidate_id=parent_candidate_id)
-        return {"candidate_occurrence_id": occurrence_id, "sql_ref": content_ref, "sql_text": sql_text}
+        candidate = {"candidate_occurrence_id": occurrence_id, "sql_ref": content_ref, "sql_text": sql_text}
+        self._candidates_by_sql.setdefault(sql_text, []).append(candidate)
+        return candidate
+
+    def candidate_for_input(self, sql_text: str) -> dict[str, Any]:
+        known = self._candidates_by_sql.get(sql_text)
+        if known:
+            return known[-1]
+        candidate = self.candidate(sql_text)
+        self.event("candidate.provenance", candidate_occurrence_id=candidate["candidate_occurrence_id"],
+                   producer_attribution="unattributed")
+        return candidate
 
     def logical_call(self, kind: str, **facts: Any) -> dict[str, Any]:
         logical_call_id = identity()
@@ -326,6 +446,26 @@ class EvidenceRun:
                           target_schema_version=target_schema_version, adapter_version=adapter_version,
                           original_record_ref=original_record_ref, fabricated_facts=[])
 
+    def adapt_legacy_record(self, record: Mapping[str, Any], *, source_schema_version: int,
+                            adapter_version: str) -> dict[str, Any]:
+        original_ref = self.artifact(dict(record))
+        if original_ref is None:
+            self._issue("legacy_original_unavailable")
+        observed = {key: record[key] for key in ("type", "timestamp_ns", "execution_status") if key in record}
+        adapted = {"source_schema_version": source_schema_version, "target_schema_version": SCHEMA_VERSION,
+                   "adapter_version": adapter_version, "original_record_ref": original_ref,
+                   "observed": observed}
+        self.legacy_adapt(source_schema_version, SCHEMA_VERSION, adapter_version, original_ref or "")
+        return adapted
+
+    def reexport_event(self, record: Mapping[str, Any]) -> bool:
+        event_id = record.get("event_id")
+        segment_id = record.get("execution_segment_id")
+        if not isinstance(event_id, str) or not isinstance(segment_id, str):
+            self._issue("reexport_identity_missing")
+            return False
+        return self._enqueue(f"segments/{segment_id}/events/{event_id}.json", dict(record))
+
     def evaluate(self, evidence: Mapping[str, Any], *, required_metrics: set[str] | None = None) -> dict[str, Any]:
         if self.acceptance_profile is None:
             raise ValueError("acceptance_profile_required")
@@ -346,10 +486,16 @@ class EvidenceRun:
         self._enqueue(f"segments/{self.segment_id}/manifest.json", self._manifest)
         self._token = _current.set(self)
         self.event("segment.started")
+        if self.prior_run_id or self.prior_segment or self.checkpoint_ref:
+            self.resume(prior_run_id=self.prior_run_id, prior_segment=self.prior_segment,
+                        checkpoint_ref=self.checkpoint_ref)
         return self
 
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
         _current.reset(self._token)
+        required = set(self.collection_config.values["required_fields"])
+        if required - self._observed_fields:
+            self._issue("required_evidence_missing")
         self.event("segment.finished", execution_status="failed" if exc_type else "success")
         # Drain with a deadline; a stalled filesystem cannot block the method forever.
         deadline = time.monotonic() + self.write_wait_s
@@ -358,9 +504,9 @@ class EvidenceRun:
         if self._queue.unfinished_tasks:
             self._issue("write_wait_limit")
         if not self._failed.is_set():
-            self._enqueue(f"segments/{self.segment_id}/complete.json", {"event_count": self._count})
+            self._enqueue_control(f"segments/{self.segment_id}/complete.json", {"event_count": self._count})
         else:
-            self._enqueue(f"segments/{self.segment_id}/issues.json", {"issues": sorted(self._issues)})
+            self._enqueue_control(f"segments/{self.segment_id}/issues.json", {"issues": sorted(self._issues)})
         second_deadline = time.monotonic() + self.write_wait_s
         while self._queue.unfinished_tasks and time.monotonic() < second_deadline:
             time.sleep(0.001)
@@ -390,10 +536,82 @@ def current_run() -> EvidenceRun | None:
     return _current.get()
 
 
+def current_span_id() -> str | None:
+    return _span.get()
+
+
 def submit_with_evidence(executor: Any, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     """Propagate context only at Squrve-owned executor boundaries."""
     context = contextvars.copy_context()
     return executor.submit(context.run, fn, *args, **kwargs)
+
+
+def _sql_values(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, (list, tuple)):
+        return [item for item in value if isinstance(item, str)]
+    return []
+
+
+def _record_actor_specific(run: EvidenceRun, fn: Callable[..., Any], actor: Any, item: Any,
+                           args: tuple[Any, ...], kwargs: Mapping[str, Any], result: Any,
+                           span_id: str, category: str, output_ref: str | None) -> None:
+    try:
+        bound = inspect.signature(fn).bind_partial(actor, item, *args, **kwargs)
+        inputs = {key: value for key, value in bound.arguments.items() if key not in {"self", "item"}}
+    except (TypeError, ValueError):
+        inputs = dict(kwargs)
+    input_manifest = {name: {"availability": Availability.PRESENT, "value_ref": run.value_ref(value)}
+                      for name, value in inputs.items()}
+    run.event("actor.input_manifest", actor_category=category, fields=input_manifest)
+
+    sql_inputs = _sql_values(inputs.get("pred_sql"))
+    sql_outputs = _sql_values(result)
+    if isinstance(result, Mapping):
+        sql_outputs = _sql_values(result.get("pred_sql") or result.get("sql") or result.get("SQL")
+                                  or result.get("query"))
+
+    if category == "generator":
+        candidates = [run.candidate(sql, producer_span_id=span_id) for sql in sql_outputs]
+        run.event("generator.output", candidate_ids=[c["candidate_occurrence_id"] for c in candidates],
+                  output_ref=output_ref)
+    elif category == "scaler":
+        input_candidates = [run.candidate_for_input(sql) for sql in sql_inputs]
+        produced = [run.candidate(sql, producer_span_id=span_id,
+                                  parent_candidate_id=input_candidates[0]["candidate_occurrence_id"]
+                                  if len(input_candidates) == 1 else None) for sql in sql_outputs]
+        run.event("scaler.output", input_candidate_ids=[c["candidate_occurrence_id"] for c in input_candidates],
+                  produced_candidate_ids=[c["candidate_occurrence_id"] for c in produced])
+    elif category == "optimizer":
+        input_candidates = [run.candidate_for_input(sql) for sql in sql_inputs]
+        attempts = []
+        if len(input_candidates) == 1 and len(sql_outputs) == 1:
+            attempts.append(run.optimization_attempt(input_candidates[0], sql_outputs[0]))
+        else:
+            produced = [run.candidate(sql, producer_span_id=span_id) for sql in sql_outputs]
+            run.event("optimizer.output", input_candidate_ids=[c["candidate_occurrence_id"] for c in input_candidates],
+                      output_candidate_ids=[c["candidate_occurrence_id"] for c in produced],
+                      parentage="unknown" if len(input_candidates) > 1 else "explicit")
+        if attempts:
+            run.event("optimizer.output", attempts=attempts)
+    elif category == "selector":
+        pool = [run.candidate_for_input(sql) for sql in sql_inputs]
+        selected = next((c for c in pool if c["sql_text"] in sql_outputs), None)
+        run.event("selector.decision", ordered_candidate_pool=[c["candidate_occurrence_id"] for c in pool],
+                  selected_candidate_id=selected["candidate_occurrence_id"] if selected else None,
+                  consumption="unknown")
+    elif category in {"parser", "reducer"}:
+        structured_ref = output_ref or (run.artifact(result) if result is not None else None)
+        run.event(f"{category}.structured_output", output_ref=structured_ref,
+                  output_availability=Availability.PRESENT if result is not None else Availability.NOT_PROVIDED)
+    elif category == "decomposer":
+        plan_ref = output_ref or (run.artifact(result) if result is not None else None)
+        run.event("decomposer.output", decomposition_output_ref=plan_ref,
+                  runtime_tasks_created=False)
+    elif category in {"agent", "nest"}:
+        run.event(f"{category}.decision", output_ref=output_ref,
+                  information_consumption="unknown")
 
 
 def instrument_actor(fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -426,17 +644,7 @@ def instrument_actor(fn: Callable[..., Any]) -> Callable[..., Any]:
             duration = time.monotonic_ns() - start
             output_ref = run.artifact(result) if run.capture_outputs else None
             category = type(self).__module__.split(".")[-2] if "." in type(self).__module__ else "unknown"
-            if isinstance(result, Mapping):
-                structured_keys = sorted(str(key) for key in result.keys()
-                                         if str(key).lower() in {"sql", "query", "schema", "schemas", "links",
-                                                                  "candidates", "selected", "tasks", "plan"})
-                if structured_keys:
-                    run.event("actor.structured_output", actor_category=category,
-                              output_ref=output_ref, fields=structured_keys,
-                              availability={key: Availability.PRESENT for key in structured_keys})
-                sql_value = result.get("sql") or result.get("SQL") or result.get("query")
-                if isinstance(sql_value, str):
-                    run.candidate(sql_value, producer_span_id=span_id)
+            _record_actor_specific(run, fn, self, item, args, kwargs, result, span_id, category, output_ref)
             run.event("actor.finished", span_id=span_id, execution_status="success",
                       duration_ns=duration, output_ref=output_ref)
             return result
@@ -530,3 +738,53 @@ def read_evidence(directory: str | Path) -> dict[str, Any]:
     return {"schema_version": SCHEMA_VERSION, "events": events, "artifacts": artifacts,
             "issues": issues, "evidence_status": status, "coverage_status": coverage_status,
             "execution_status": execution_status, "evaluation_status": evaluation_status}
+
+
+def evaluate_evidence(directory: str | Path, evidence_values: Mapping[str, Any],
+                      profile: AcceptanceProfile, *, required_metrics: set[str] | None = None) -> dict[str, Any]:
+    """Offline metric dependency and acceptance evaluation over persisted evidence."""
+    bundle = read_evidence(directory)
+    metrics = evaluate_metric_dependencies(evidence_values, profile)
+    if bundle["evidence_status"] in {"invalid", "unavailable"}:
+        for result in metrics.values():
+            result["status"] = "unavailable"
+            result.setdefault("missing", []).append("runtime_evidence")
+    gate = acceptance_gate(metrics, required_metrics or set(metrics))
+    return {"execution_status": bundle["execution_status"], "evidence_status": bundle["evidence_status"],
+            "evaluation_status": "accepted" if gate["accepted"] else "rejected",
+            "metrics": metrics, "acceptance": gate, "profile_version": profile.version}
+
+
+_original_thread_pool_submit = ThreadPoolExecutor.submit
+
+
+def _evidence_submit(self: ThreadPoolExecutor, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
+    run = current_run()
+    if run is None:
+        return _original_thread_pool_submit(self, fn, *args, **kwargs)
+    context = contextvars.copy_context()
+    task_id = run.task_created(parent_task_id=None) if run else None
+    if run:
+        run.workflow_event("scheduled", task_id=task_id)
+
+    def invoke() -> Any:
+        if run:
+            run.workflow_event("started", task_id=task_id)
+        try:
+            result = fn(*args, **kwargs)
+        except BaseException as exc:
+            if run:
+                run.workflow_event("finished", task_id=task_id, execution_status="failed",
+                                   error_type=type(exc).__name__)
+            raise
+        else:
+            if run:
+                run.workflow_event("finished", task_id=task_id, execution_status="success")
+            return result
+
+    return _original_thread_pool_submit(self, context.run, invoke)
+
+
+if not getattr(ThreadPoolExecutor.submit, "_squrve_evidence", False):
+    _evidence_submit._squrve_evidence = True  # type: ignore[attr-defined]
+    ThreadPoolExecutor.submit = _evidence_submit  # type: ignore[method-assign,assignment]

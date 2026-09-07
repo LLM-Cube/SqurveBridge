@@ -222,9 +222,12 @@ def execute_sql(db_type, db_path, sql, credential):
         return "No data found for the specified query"
     if isinstance(res, pd.DataFrame):
         if evidence_run:
+            result_ref = evidence_run.artifact(res.to_dict(orient="split")) if evidence_run.capture_outputs else None
             evidence_run.event("db.finished", operation_id=operation_id, execution_status="success",
-                               fetch_completeness="complete", preservation_completeness="unknown",
-                               observed_row_count=len(res), duration_ns=time.monotonic_ns() - started_ns)
+                               fetch_completeness="complete",
+                               preservation_completeness="complete" if result_ref else "disabled",
+                               result_ref=result_ref, observed_row_count=len(res),
+                               known_total_row_count=len(res), duration_ns=time.monotonic_ns() - started_ns)
         return str(res)
     if evidence_run:
         evidence_run.event("db.finished", operation_id=operation_id, execution_status="success",

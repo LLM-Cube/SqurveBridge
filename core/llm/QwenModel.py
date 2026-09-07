@@ -7,7 +7,7 @@ from llama_index.core.llms import (
 )
 from llama_index.core.llms.callbacks import llm_completion_callback
 from openai import OpenAI
-from core.llm.token_logger import TokenLogger, collect_stream_completion, record_completion_usage
+from core.llm.token_logger import TokenLogger, collect_stream_completion, observe_llm_call, observe_llm_stream_call, record_completion_usage
 
 
 class QwenModel(CustomLLM):
@@ -70,6 +70,7 @@ class QwenModel(CustomLLM):
     def set_api_key(self, api_key: str):
         self.client.api_key = api_key
 
+    @observe_llm_call
     @llm_completion_callback()
     def complete(self, prompt: str, **kwargs: Any) -> CompletionResponse:
         create_kwargs = dict(
@@ -98,6 +99,7 @@ class QwenModel(CustomLLM):
 
         return CompletionResponse(text=completion_response)
 
+    @observe_llm_stream_call
     @llm_completion_callback()
     def stream_complete(self, prompt: str, **kwargs: Any) -> CompletionResponseGen:
         accumulated_text = ""

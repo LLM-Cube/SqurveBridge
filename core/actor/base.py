@@ -120,6 +120,18 @@ class MergeStrategy(Enum):
 
 
 class MergeFunction:
+    @staticmethod
+    def _record(key, before, incoming, after):
+        try:
+            from core.evidence import current_run
+            run = current_run()
+            if run is not None:
+                refs = [ref for ref in (run.value_ref(before), run.value_ref(incoming)) if ref]
+                output_ref = run.value_ref(after)
+                run.merge(str(key), refs, output_ref or "")
+        except Exception:
+            pass
+
     @classmethod
     def get_method(cls, strategy):
         if strategy == MergeStrategy.OVERWRITE.value:
@@ -135,13 +147,16 @@ class MergeFunction:
     def overwrite(results, key, val):
         if not isinstance(results, dict):
             raise TypeError("results must be a dict!")
+        before = results.get(key)
         results[key] = val
+        MergeFunction._record(key, before, val, results.get(key))
 
     @staticmethod
     def append(results, key, val):
         if not isinstance(results, dict):
             raise TypeError("results must be a dict!")
 
+        before = copy.deepcopy(results.get(key))
         if key in results:
             if isinstance(results[key], list):
                 results[key].append(val)
@@ -149,6 +164,7 @@ class MergeFunction:
                 results[key] = [results[key], val]
         else:
             results[key] = val
+        MergeFunction._record(key, before, val, results.get(key))
         return results
 
     @staticmethod
@@ -159,6 +175,7 @@ class MergeFunction:
             logger.info("val must be a list!")
             return MergeFunction.append(results, key, val)
 
+        before = copy.deepcopy(results.get(key))
         if key in results:
             if isinstance(results[key], list):
                 results[key].extend(val)
@@ -166,6 +183,7 @@ class MergeFunction:
                 results[key] = [str(results[key]), *val]
         else:
             results[key] = val
+        MergeFunction._record(key, before, val, results.get(key))
         return results
 
 

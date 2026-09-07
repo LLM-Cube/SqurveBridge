@@ -1,6 +1,6 @@
 # 运行数据采集优化与证据链统一
 
-Status: ready-for-agent
+Status: implemented
 Specification: published to local issue tracker
 Decision baseline: Q1–Q28 confirmed; Q28 testing seam confirmed
 
@@ -93,7 +93,7 @@ Evaluate collection overhead against measured resource budgets separately from b
 
 ## Further Notes
 
-The implementation branch contains the first common-path vertical slice in `core/evidence.py`: bounded run-local event/artifact capture, context propagation across Squrve-owned executors, Actor lifecycle events, and offline integrity checks. This slice is intentionally marked `coverage_status=partial`; method-specific contracts, acceptance profiles, and richer producer/LLM/DB evidence remain versioned follow-up work. Implementation states its research track, hypothesis, supporting evidence and target repository according to workspace guidance. Experimental prototypes belong in private development; promotion to the public source requires tested, publication-safe changes.
+The implementation branch now contains all six scoped slices: bounded run-local persistence; sequential, nested and concurrent lifecycle capture; minimum adapters for all Actor categories; LLM/DB attempts, usage and completeness; mutation, merge, failure, resume and legacy evidence; and offline metric dependency/acceptance evaluation. Coverage remains `partial` only for explicitly unsupported provider-hidden retries and method-specific optional payloads, which the confirmed contract forbids the runtime from inferring. Implementation states its research track, hypothesis, supporting evidence and target repository according to workspace guidance.
 
 ## Comments
 

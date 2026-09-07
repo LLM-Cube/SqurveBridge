@@ -8,11 +8,14 @@ from core.actor.base import Actor
 from core.evidence import (
     AcceptanceProfile,
     Availability,
+    ConditionValue,
     CapabilityProfile,
     CollectionConfig,
     EvidenceRun,
     evaluate_metric_dependencies,
+    evaluate_evidence,
     acceptance_gate,
+    aggregate_usage,
     read_evidence,
 )
 from concurrent.futures import ThreadPoolExecutor
@@ -45,6 +48,14 @@ class RuntimeEvidenceTests(unittest.TestCase):
                 self.assertFalse(run.evaluate({"pred_sql": "x"})["acceptance"]["accepted"])
             self.assertEqual(read_evidence(directory)["evaluation_status"], "rejected")
 
+        with tempfile.TemporaryDirectory() as directory:
+            missing = CollectionConfig(required_fields={"selected_candidate_id"})
+            with EvidenceRun(directory, run_id="missing-required", collection_config=missing):
+                pass
+            evidence = read_evidence(directory)
+            self.assertIn("required_evidence_missing", evidence["issues"])
+            self.assertEqual(evidence["evidence_status"], "partial")
+
     def test_candidate_calls_usage_db_and_lineage_are_observed(self):
         with tempfile.TemporaryDirectory() as directory:
             with EvidenceRun(directory, run_id="facts", capture_outputs=True) as run:
@@ -64,13 +75,14 @@ class RuntimeEvidenceTests(unittest.TestCase):
             self.assertEqual(attempt["logical_call_id"], logical["logical_call_id"])
             self.assertEqual(candidate["sql_text"], "SELECT 1")
 
-    def test_availability_unknown_is_not_not_applicable(self):
+    def test_condition_unknown_is_not_not_applicable(self):
         with tempfile.TemporaryDirectory() as directory:
             with EvidenceRun(directory, run_id="availability") as run:
-                run.field("confidence", Availability.UNKNOWN, condition="parser_scored")
+                run.condition("parser_scored", ConditionValue.UNKNOWN)
             evidence = read_evidence(directory)
-            field = next(e for e in evidence["events"] if e["type"] == "field.availability")
-            self.assertEqual(field["availability"], "unknown")
+            condition = next(e for e in evidence["events"] if e["type"] == "condition.evaluated")
+            self.assertEqual(condition["value"], "unknown")
+            self.assertIn("condition_unknown", evidence["issues"])
 
     def test_optimizer_noop_reuses_candidate_but_change_creates_occurrence(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -114,7 +126,177 @@ class RuntimeEvidenceTests(unittest.TestCase):
                     self.assertIn("x", execute_sql("sqlite", "/tmp/db.sqlite", "SELECT 1", None))
             evidence = read_evidence(directory)
             finished = next(e for e in evidence["events"] if e["type"] == "db.finished")
-            self.assertEqual(finished["preservation_completeness"], "unknown")
+            self.assertEqual(finished["preservation_completeness"], "disabled")
+
+        with tempfile.TemporaryDirectory() as directory:
+            with EvidenceRun(directory, run_id="db-retained", capture_outputs=True):
+                with patch("core.db_connect.get_sql_exec_result", return_value=(pd.DataFrame({"x": [1]}), None)):
+                    execute_sql("sqlite", "/tmp/db.sqlite", "SELECT 1", None)
+            evidence = read_evidence(directory)
+            finished = next(e for e in evidence["events"] if e["type"] == "db.finished")
+            self.assertEqual(finished["preservation_completeness"], "complete")
+            self.assertIn(finished["result_ref"], evidence["artifacts"])
+
+    def test_llm_entry_point_links_usage_to_observable_attempt(self):
+        from core.llm.token_logger import TokenLogger, observe_llm_call, observe_llm_stream_call
+
+        class FakeModel:
+            model_name = "fake"
+            token_logger = TokenLogger()
+
+            @observe_llm_call
+            def complete(self, prompt):
+                self.token_logger.record({"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
+                                         model=self.model_name)
+                return "ok"
+
+        with tempfile.TemporaryDirectory() as directory:
+            with EvidenceRun(directory, run_id="llm"):
+                self.assertEqual(FakeModel().complete("hello"), "ok")
+            evidence = read_evidence(directory)
+            usage = next(e for e in evidence["events"] if e["type"] == "usage.reported")
+            attempt = next(e for e in evidence["events"] if e["type"] == "llm.attempt.finished")
+            self.assertEqual(usage["attempt_id"], attempt["attempt_id"])
+            self.assertEqual(usage["logical_call_id"], attempt["logical_call_id"])
+
+        class FakeStreamModel(FakeModel):
+            @observe_llm_stream_call
+            def stream_complete(self, prompt):
+                self.token_logger.record({"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                                         model=self.model_name)
+                yield "a"
+                yield "b"
+
+        with tempfile.TemporaryDirectory() as directory:
+            with EvidenceRun(directory, run_id="llm-stream"):
+                self.assertEqual(list(FakeStreamModel().stream_complete("hello")), ["a", "b"])
+            evidence = read_evidence(directory)
+            usage = next(e for e in evidence["events"] if e["type"] == "usage.reported")
+            self.assertIsNotNone(usage["attempt_id"])
+
+    def test_dataset_mutation_is_attributed_to_active_actor_span(self):
+        from core.data_manage import Dataset
+
+        class MutatingActor(Actor):
+            def __init__(self, dataset):
+                self.dataset = dataset
+
+            def act(self, item, **kwargs):
+                self.dataset.setitem(item, "value", 2)
+                return 2
+
+        dataset = Dataset([{"db_id": "db", "value": 1}], "/tmp/schema.json")
+        with tempfile.TemporaryDirectory() as directory:
+            with EvidenceRun(directory, run_id="mutation"):
+                self.assertEqual(MutatingActor(dataset).act(0), 2)
+            evidence = read_evidence(directory)
+            change = next(e for e in evidence["events"] if e["type"] == "producer.change")
+            actor = next(e for e in evidence["events"] if e["type"] == "actor.started")
+            self.assertEqual(change["producer_basis_refs"], [actor["span_id"]])
+            self.assertEqual(change["producer_attribution"], "explicit")
+
+    def test_runtime_merge_records_input_and_output_lineage(self):
+        from core.actor.base import MergeFunction
+
+        values = {"pred_sql": ["SELECT 1"]}
+        with tempfile.TemporaryDirectory() as directory:
+            with EvidenceRun(directory, run_id="merge"):
+                MergeFunction.append(values, "pred_sql", "SELECT 2")
+            evidence = read_evidence(directory)
+            merge = next(e for e in evidence["events"] if e["type"] == "merge.observed")
+            self.assertEqual(merge["lineage_status"], "explicit")
+            self.assertEqual(len(merge["input_refs"]), 2)
+
+    def test_actor_adapters_preserve_candidate_pool_and_selection(self):
+        class GeneratorActor(Actor):
+            def act(self, item, **kwargs):
+                return ["SELECT 1", "SELECT 2"]
+
+        class SelectorActor(Actor):
+            def act(self, item, pred_sql=None, **kwargs):
+                return pred_sql[1]
+
+        GeneratorActor.__module__ = "core.actor.generator.test"
+        SelectorActor.__module__ = "core.actor.selector.test"
+        with tempfile.TemporaryDirectory() as directory:
+            with EvidenceRun(directory, run_id="adapters"):
+                pool = GeneratorActor().act(0)
+                self.assertEqual(SelectorActor().act(0, pred_sql=pool), "SELECT 2")
+            evidence = read_evidence(directory)
+            generated = next(e for e in evidence["events"] if e["type"] == "generator.output")
+            selected = next(e for e in evidence["events"] if e["type"] == "selector.decision")
+            self.assertEqual(len(generated["candidate_ids"]), 2)
+            self.assertEqual(selected["selected_candidate_id"], generated["candidate_ids"][1])
+
+    def test_engine_entry_point_can_persist_run_local_evidence(self):
+        from core.engine import Engine
+
+        class FakeTask:
+            name = "fake"
+            task_id = "task-1"
+
+            def __init__(self):
+                self.calls = 0
+
+            def run(self):
+                self.calls += 1
+
+        task = FakeTask()
+        engine = Engine.__new__(Engine)
+        engine.exec_process = []
+        engine.parse_exec_process = lambda _process: task
+        with tempfile.TemporaryDirectory() as directory:
+            engine.execute(evidence_directory=directory, evidence_run_id="engine-run")
+            evidence = read_evidence(directory)
+        self.assertEqual(task.calls, 1)
+        self.assertEqual(evidence["execution_status"], "success")
+
+    def test_resume_legacy_and_reexport_preserve_observed_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with EvidenceRun(directory, run_id="resumed", prior_run_id="original",
+                             prior_segment="segment-1", checkpoint_ref="checkpoint-1") as run:
+                adapted = run.adapt_legacy_record(
+                    {"type": "actor.finished", "execution_status": "success", "unobserved": "ignored"},
+                    source_schema_version=0, adapter_version="legacy-v1",
+                )
+            first = read_evidence(directory)
+            resume = next(e for e in first["events"] if e["type"] == "execution.resumed")
+            self.assertEqual(resume["prior_run_id"], "original")
+            self.assertEqual(adapted["observed"], {"type": "actor.finished", "execution_status": "success"})
+
+            event = next(e for e in first["events"] if e["type"] == "legacy.adapted")
+            with EvidenceRun(directory, run_id="resumed") as run:
+                self.assertTrue(run.reexport_event(event))
+            second = read_evidence(directory)
+            self.assertEqual(sum(e["event_id"] == event["event_id"] for e in second["events"]), 1)
+
+    def test_usage_aggregation_does_not_double_count_logical_and_attempt_scope(self):
+        records = [
+            {"type": "usage.reported", "scope": "logical_call", "logical_call_id": "call-1",
+             "usage": {"total_tokens": 10}},
+            {"type": "usage.reported", "scope": "attempt", "logical_call_id": "call-1",
+             "attempt_id": "attempt-1", "usage": {"total_tokens": 6}},
+            {"type": "usage.reported", "scope": "attempt", "logical_call_id": "call-1",
+             "attempt_id": "attempt-2", "usage": {"total_tokens": 4}},
+        ]
+        usage = aggregate_usage(records)
+        self.assertEqual(usage["totals"]["total_tokens"], 10)
+        self.assertEqual(usage["selected_records"], 2)
+
+    def test_offline_evaluation_keeps_valid_metrics_when_cost_is_missing(self):
+        profile = AcceptanceProfile("release-v1", {
+            "EX": {"pred_result", "gold_result"},
+            "cost": {"usage"},
+        })
+        with tempfile.TemporaryDirectory() as directory:
+            with EvidenceRun(directory, run_id="offline"):
+                pass
+            result = evaluate_evidence(
+                directory, {"pred_result": [1], "gold_result": [1]}, profile, required_metrics={"EX"},
+            )
+        self.assertEqual(result["metrics"]["EX"]["status"], "computable")
+        self.assertEqual(result["metrics"]["cost"]["status"], "unavailable")
+        self.assertEqual(result["evaluation_status"], "accepted")
     def test_sink_failure_is_partial_but_does_not_change_actor_result(self):
         class FailingSink:
             def write(self, name, payload):
@@ -137,11 +319,19 @@ class RuntimeEvidenceTests(unittest.TestCase):
 
     def test_truncated_artifact_is_reported_as_incomplete(self):
         with tempfile.TemporaryDirectory() as directory:
-            with EvidenceRun(directory, run_id="truncated", max_bytes=2048, capture_outputs=True) as run:
-                self.assertIsNone(run.artifact({"large": "x" * 4096}))
+            with EvidenceRun(directory, run_id="truncated", max_bytes=8192, capture_outputs=True) as run:
+                self.assertIsNone(run.artifact({"large": "x" * 16384}))
             evidence = read_evidence(directory)
             self.assertIn("artifact_limit", evidence["issues"])
             self.assertEqual(evidence["evidence_status"], "partial")
+
+    def test_run_storage_budget_is_bounded_and_reported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with EvidenceRun(directory, run_id="budget", max_bytes=8192, max_total_bytes=12000) as run:
+                for index in range(20):
+                    run.event("payload", index=index, value="x" * 900)
+            evidence = read_evidence(directory)
+            self.assertIn("run_size_limit", evidence["issues"])
 
     def test_concurrent_operations_keep_parent_relationships(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -157,6 +347,18 @@ class RuntimeEvidenceTests(unittest.TestCase):
             parent = starts[0]
             children = [e for e in evidence["events"] if e["type"] == "child.started"]
             self.assertEqual([e["parent_span_id"] for e in children], [parent["span_id"]] * 2)
+
+    def test_plain_thread_pool_submit_preserves_context_and_task_events(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with EvidenceRun(directory, run_id="executor") as run:
+                with run.operation("actor"):
+                    with ThreadPoolExecutor(max_workers=1) as executor:
+                        self.assertTrue(executor.submit(self._child_operation, run).result())
+            evidence = read_evidence(directory)
+            kinds = {event["type"] for event in evidence["events"]}
+            self.assertIn("task.created", kinds)
+            self.assertIn("workflow.started", kinds)
+            self.assertIn("workflow.finished", kinds)
 
     @staticmethod
     def _child_operation(run):

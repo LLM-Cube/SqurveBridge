@@ -1,7 +1,10 @@
 import json
+import contextvars
+import functools
 import math
 import statistics
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -14,6 +17,94 @@ _original_thread_pool_submit = ThreadPoolExecutor.submit
 _thread_pool_submit_patched = False
 _global_loggers: list["TokenLogger"] = []
 _global_loggers_lock = threading.Lock()
+_logical_call_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("logical_call_id", default=None)
+_attempt_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("attempt_id", default=None)
+
+
+def observe_llm_call(fn):
+    """Record one observable provider attempt without inferring hidden retries."""
+    @functools.wraps(fn)
+    def wrapped(self, *args, **kwargs):
+        try:
+            from core.evidence import current_run, identity
+            run = current_run()
+        except Exception:
+            run = None
+        if run is None:
+            return fn(self, *args, **kwargs)
+        logical_call_id = identity()
+        attempt_id = identity()
+        model = getattr(self, "model_name", None)
+        run.event("logical_call.started", logical_call_id=logical_call_id,
+                  operation_kind="llm", model=model, retry_observability="opaque")
+        run.event("llm.attempt.started", logical_call_id=logical_call_id,
+                  attempt_id=attempt_id, model=model, retry_observability="opaque")
+        logical_token = _logical_call_id.set(logical_call_id)
+        attempt_token = _attempt_id.set(attempt_id)
+        started = time.monotonic_ns()
+        try:
+            result = fn(self, *args, **kwargs)
+        except BaseException as exc:
+            duration = time.monotonic_ns() - started
+            run.event("llm.attempt.finished", logical_call_id=logical_call_id, attempt_id=attempt_id,
+                      execution_status="failed", error_type=type(exc).__name__, duration_ns=duration)
+            run.event("logical_call.finished", logical_call_id=logical_call_id,
+                      execution_status="failed", duration_ns=duration)
+            raise
+        else:
+            duration = time.monotonic_ns() - started
+            run.event("llm.attempt.finished", logical_call_id=logical_call_id, attempt_id=attempt_id,
+                      execution_status="success", duration_ns=duration)
+            run.event("logical_call.finished", logical_call_id=logical_call_id,
+                      execution_status="success", duration_ns=duration)
+            return result
+        finally:
+            _attempt_id.reset(attempt_token)
+            _logical_call_id.reset(logical_token)
+    return wrapped
+
+
+def observe_llm_stream_call(fn):
+    """Keep attempt identity active until a stream is fully consumed or fails."""
+    @functools.wraps(fn)
+    def wrapped(self, *args, **kwargs):
+        try:
+            from core.evidence import current_run, identity
+            run = current_run()
+        except Exception:
+            run = None
+        if run is None:
+            yield from fn(self, *args, **kwargs)
+            return
+        logical_call_id = identity()
+        attempt_id = identity()
+        model = getattr(self, "model_name", None)
+        run.event("logical_call.started", logical_call_id=logical_call_id,
+                  operation_kind="llm_stream", model=model, retry_observability="opaque")
+        run.event("llm.attempt.started", logical_call_id=logical_call_id,
+                  attempt_id=attempt_id, model=model, retry_observability="opaque")
+        logical_token = _logical_call_id.set(logical_call_id)
+        attempt_token = _attempt_id.set(attempt_id)
+        started = time.monotonic_ns()
+        try:
+            yield from fn(self, *args, **kwargs)
+        except BaseException as exc:
+            duration = time.monotonic_ns() - started
+            run.event("llm.attempt.finished", logical_call_id=logical_call_id, attempt_id=attempt_id,
+                      execution_status="failed", error_type=type(exc).__name__, duration_ns=duration)
+            run.event("logical_call.finished", logical_call_id=logical_call_id,
+                      execution_status="failed", duration_ns=duration)
+            raise
+        else:
+            duration = time.monotonic_ns() - started
+            run.event("llm.attempt.finished", logical_call_id=logical_call_id, attempt_id=attempt_id,
+                      execution_status="success", duration_ns=duration)
+            run.event("logical_call.finished", logical_call_id=logical_call_id,
+                      execution_status="success", duration_ns=duration)
+        finally:
+            _attempt_id.reset(attempt_token)
+            _logical_call_id.reset(logical_token)
+    return wrapped
 
 
 def get_llm_tag() -> Optional[str]:
@@ -43,7 +134,7 @@ def _patch_thread_pool_submit() -> None:
 
         return _original_thread_pool_submit(self, run_with_llm_tag, *args, **kwargs)
 
-    ThreadPoolExecutor.submit = submit_with_llm_tag
+    ThreadPoolExecutor.submit = submit_with_llm_tag  # type: ignore[method-assign]
     _thread_pool_submit_patched = True
 
 
@@ -128,7 +219,8 @@ class TokenLogger:
             run = current_run()
             if run is not None:
                 run.event("usage.reported", scope="provider_observation", source="provider_sdk",
-                          logical_call_id=None, attempt_id=None, retry_observability="opaque",
+                          logical_call_id=_logical_call_id.get(), attempt_id=_attempt_id.get(),
+                          retry_observability="opaque",
                           model=model, tag=record["tag"], prompt_tokens=prompt_tokens,
                           completion_tokens=completion_tokens, total_tokens=total_tokens)
         except Exception:
@@ -243,7 +335,7 @@ def collect_all_token_data() -> Dict[str, Any]:
     with _global_loggers_lock:
         loggers = list(_global_loggers)
 
-    records = []
+    records: list[Dict[str, Any]] = []
     total = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
     for logger in loggers:
