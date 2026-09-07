@@ -12,6 +12,7 @@ from core.actor.selector.BaseSelect import BaseSelector
 from core.data_manage import Dataset, single_central_process
 from core.utils import parse_schema_from_df, load_dataset, save_dataset
 from core.db_connect import get_sql_exec_result_with_time
+from core.evidence import submit_with_evidence
 
 
 @dataclass
@@ -263,7 +264,7 @@ Return a JSON object with 'score' (0-1) and 'feedback' (string).'''
             logger.debug(f"Executing {len(candidates)} SQL candidates concurrently...")
             with ThreadPoolExecutor() as executor:
                 future_to_idx = {
-                    executor.submit(
+                    submit_with_evidence(executor,
                         self._execute_candidate_sql,
                         cand["SQL"],
                         db_type,
@@ -303,7 +304,7 @@ Return a JSON object with 'score' (0-1) and 'feedback' (string).'''
             evaluations = [None] * len(candidates)
             with ThreadPoolExecutor() as executor:
                 future_to_idx = {
-                    executor.submit(self._evaluate_sql, question, cand["SQL"], unit_tests): i
+                    submit_with_evidence(executor, self._evaluate_sql, question, cand["SQL"], unit_tests): i
                     for i, cand in enumerate(candidates)
                 }
                 for future in as_completed(future_to_idx):

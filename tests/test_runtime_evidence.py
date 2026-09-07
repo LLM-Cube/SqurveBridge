@@ -1,7 +1,9 @@
-"""Behavioral acceptance at existing Actor entry points and the evidence reader."""
+"""Behavioral acceptance at existing Squrve entry points and the evidence reader."""
 
+import json
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from core.actor.base import Actor
@@ -158,6 +160,13 @@ class RuntimeEvidenceTests(unittest.TestCase):
             attempt = next(e for e in evidence["events"] if e["type"] == "llm.attempt.finished")
             self.assertEqual(usage["attempt_id"], attempt["attempt_id"])
             self.assertEqual(usage["logical_call_id"], attempt["logical_call_id"])
+            self.assertEqual(usage["scope"], "attempt")
+            self.assertEqual(usage["usage"], {
+                "prompt_tokens": 2,
+                "completion_tokens": 1,
+                "total_tokens": 3,
+            })
+            self.assertEqual(aggregate_usage(evidence["events"])["totals"]["total_tokens"], 3)
 
         class FakeStreamModel(FakeModel):
             @observe_llm_stream_call
@@ -173,6 +182,35 @@ class RuntimeEvidenceTests(unittest.TestCase):
             evidence = read_evidence(directory)
             usage = next(e for e in evidence["events"] if e["type"] == "usage.reported")
             self.assertIsNotNone(usage["attempt_id"])
+
+    def test_opaque_retry_and_partial_usage_are_not_inferred(self):
+        from core.llm.token_logger import TokenLogger, observe_llm_call
+
+        class RetryingProvider:
+            model_name = "opaque-provider"
+            token_logger = TokenLogger()
+
+            @observe_llm_call
+            def complete(self, prompt):
+                for _ in range(2):
+                    pass  # Provider/SDK internals are intentionally opaque to the collector.
+                self.token_logger.record({"total_tokens": 5}, model=self.model_name)
+                return "ok"
+
+        with tempfile.TemporaryDirectory() as directory:
+            with EvidenceRun(directory, run_id="opaque-retry"):
+                self.assertEqual(RetryingProvider().complete("hello"), "ok")
+                RetryingProvider.token_logger.record({"total_tokens": 0}, model="opaque-provider")
+            evidence = read_evidence(directory)
+        attempts = [e for e in evidence["events"] if e["type"] == "llm.attempt.started"]
+        usage = next(e for e in evidence["events"]
+                     if e["type"] == "usage.reported" and e["usage"] == {"total_tokens": 5})
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(attempts[0]["retry_observability"], "opaque")
+        self.assertEqual(usage["usage"], {"total_tokens": 5})
+        zero_usage = next(e for e in evidence["events"]
+                          if e["type"] == "usage.reported" and e["usage"] == {"total_tokens": 0})
+        self.assertEqual(zero_usage["scope"], "provider_observation")
 
     def test_dataset_mutation_is_attributed_to_active_actor_span(self):
         from core.data_manage import Dataset
@@ -227,6 +265,60 @@ class RuntimeEvidenceTests(unittest.TestCase):
             selected = next(e for e in evidence["events"] if e["type"] == "selector.decision")
             self.assertEqual(len(generated["candidate_ids"]), 2)
             self.assertEqual(selected["selected_candidate_id"], generated["candidate_ids"][1])
+
+    def test_equal_sql_candidates_remain_distinct_and_selection_is_ambiguous(self):
+        class GeneratorActor(Actor):
+            def act(self, item, **kwargs):
+                return ["SELECT 1", "SELECT 1"]
+
+        class SelectorActor(Actor):
+            def act(self, item, pred_sql=None, **kwargs):
+                return pred_sql[0]
+
+        GeneratorActor.__module__ = "core.actor.generator.test"
+        SelectorActor.__module__ = "core.actor.selector.test"
+        with tempfile.TemporaryDirectory() as directory:
+            with EvidenceRun(directory, run_id="duplicate-candidates"):
+                pool = GeneratorActor().act(0)
+                SelectorActor().act(0, pred_sql=pool)
+            evidence = read_evidence(directory)
+        generated = next(e for e in evidence["events"] if e["type"] == "generator.output")
+        selected = next(e for e in evidence["events"] if e["type"] == "selector.decision")
+        self.assertEqual(len(set(generated["candidate_ids"])), 2)
+        self.assertEqual(selected["ordered_candidate_pool"], generated["candidate_ids"])
+        self.assertIsNone(selected["selected_candidate_id"])
+        self.assertEqual(selected["selection_identity"], "ambiguous")
+
+    def test_pipeline_entry_point_preserves_output_with_collection_enabled(self):
+        from core.actor.nest.pipeline import PipelineActor
+        from core.data_manage import Dataset
+
+        class AddOneActor(Actor):
+            NAME = "add-one"
+            OUTPUT_NAME = "value"
+            STRATEGY = "overwrite"
+
+            def __init__(self, dataset):
+                self.dataset = dataset
+
+            def act(self, item, value=0, **kwargs):
+                return value + 1
+
+        def execute(directory=None):
+            dataset = Dataset([{"db_id": "db", "instance_id": "sample-1"}], "/tmp/schema.json")
+            pipeline = PipelineActor(dataset=dataset, actors=[AddOneActor(dataset), AddOneActor(dataset)])
+            if directory is None:
+                return pipeline.act(0, value=1)
+            with EvidenceRun(directory, run_id="pipeline"):
+                return pipeline.act(0, value=1)
+
+        disabled = execute()
+        with tempfile.TemporaryDirectory() as directory:
+            enabled = execute(directory)
+            evidence = read_evidence(directory)
+        self.assertEqual(enabled, disabled)
+        self.assertEqual(enabled, 3)
+        self.assertEqual(sum(e["type"] == "actor.started" for e in evidence["events"]), 3)
 
     def test_engine_entry_point_can_persist_run_local_evidence(self):
         from core.engine import Engine
@@ -297,6 +389,27 @@ class RuntimeEvidenceTests(unittest.TestCase):
         self.assertEqual(result["metrics"]["EX"]["status"], "computable")
         self.assertEqual(result["metrics"]["cost"]["status"], "unavailable")
         self.assertEqual(result["evaluation_status"], "accepted")
+
+    def test_partial_database_results_block_result_metrics(self):
+        profile = AcceptanceProfile("release-v1", {"EX": {"pred_result", "gold_result"}})
+        with tempfile.TemporaryDirectory() as directory:
+            with EvidenceRun(directory, run_id="partial-db") as run:
+                run.db_operation(
+                    "SELECT 1",
+                    execution_status="success",
+                    fetch_completeness="complete",
+                    preservation_completeness="disabled",
+                )
+            result = evaluate_evidence(
+                directory,
+                {"pred_result": [1], "gold_result": [1]},
+                profile,
+                required_metrics={"EX"},
+            )
+        self.assertEqual(result["metrics"]["EX"]["status"], "unavailable")
+        self.assertIn("complete_result_evidence", result["metrics"]["EX"]["missing"])
+        self.assertEqual(result["evaluation_status"], "rejected")
+
     def test_sink_failure_is_partial_but_does_not_change_actor_result(self):
         class FailingSink:
             def write(self, name, payload):
@@ -314,8 +427,9 @@ class RuntimeEvidenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with EvidenceRun(directory, run_id="unfinished") as run:
                 run.event("operation.started", span_id="orphan")
+                run.event("llm.attempt.started", attempt_id="attempt-orphan", logical_call_id="call")
             evidence = read_evidence(directory)
-            self.assertIn("unobserved_completion", evidence["issues"])
+        self.assertIn("unobserved_completion", evidence["issues"])
 
     def test_truncated_artifact_is_reported_as_incomplete(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -347,18 +461,34 @@ class RuntimeEvidenceTests(unittest.TestCase):
             parent = starts[0]
             children = [e for e in evidence["events"] if e["type"] == "child.started"]
             self.assertEqual([e["parent_span_id"] for e in children], [parent["span_id"]] * 2)
+            task_ids = [e["task_id"] for e in evidence["events"] if e["type"] == "task.created"]
+            scheduled = [e for e in evidence["events"] if e["type"] == "workflow.scheduled"]
+            self.assertEqual(len(task_ids), 2)
+            self.assertEqual({e["task_id"] for e in scheduled}, set(task_ids))
+            self.assertEqual([e["scheduled_by_span_id"] for e in scheduled], [parent["span_id"]] * 2)
 
-    def test_plain_thread_pool_submit_preserves_context_and_task_events(self):
+    def test_plain_thread_pool_work_is_not_claimed_as_squrve_task(self):
         with tempfile.TemporaryDirectory() as directory:
-            with EvidenceRun(directory, run_id="executor") as run:
-                with run.operation("actor"):
-                    with ThreadPoolExecutor(max_workers=1) as executor:
-                        self.assertTrue(executor.submit(self._child_operation, run).result())
+            with EvidenceRun(directory, run_id="executor"):
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    self.assertTrue(executor.submit(lambda: True).result())
             evidence = read_evidence(directory)
             kinds = {event["type"] for event in evidence["events"]}
-            self.assertIn("task.created", kinds)
-            self.assertIn("workflow.started", kinds)
-            self.assertIn("workflow.finished", kinds)
+            self.assertNotIn("task.created", kinds)
+            self.assertNotIn("workflow.started", kinds)
+            self.assertNotIn("workflow.finished", kinds)
+
+    def test_corrupt_event_identity_invalidates_offline_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with EvidenceRun(directory, run_id="corrupt") as run:
+                run.event("observed.fact", value=1)
+            event_path = next((Path(directory) / "segments").glob("*/events/*.json"))
+            event = json.loads(event_path.read_text())
+            event["event_id"] = "tampered"
+            event_path.write_text(json.dumps(event))
+            evidence = read_evidence(directory)
+        self.assertEqual(evidence["evidence_status"], "invalid")
+        self.assertIn("invalid_segment", evidence["issues"])
 
     @staticmethod
     def _child_operation(run):

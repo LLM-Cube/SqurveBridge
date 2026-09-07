@@ -10,6 +10,15 @@ Decision baseline: Q1–Q28 confirmed; Q28 testing seam confirmed
 - [字段矩阵与实施切片](../../docs/design/runtime-evidence-field-matrix.md)：待整体审阅的字段映射、条件、实施次序。
 - [领域术语](../../CONTEXT.md)：概念定义。
 
+Implementation tickets:
+
+- [01 Contract and local store](issues/01-contract-local-store.md)
+- [02 Common execution path](issues/02-common-execution-path.md)
+- [03 Actor facts and lineage](issues/03-actor-facts-lineage.md)
+- [04 LLM and DB operations](issues/04-llm-db-operations.md)
+- [05 Failure, recovery and legacy evidence](issues/05-failure-recovery-legacy.md)
+- [06 Evaluation dependency and acceptance](issues/06-evaluation-acceptance.md)
+
 ## Problem Statement
 
 运行使用者需要知道 Actor 实际看到和产生了什么、哪些操作确实发生、数据是否完整，以及某个指标为什么可计算或不可计算。现有 trace 摘要、阶段快照及 token 日志不足以统一表达候选实例、调用/重试范围、并发生产者归属与采集故障；截断摘要也不能作为完整产物使用。

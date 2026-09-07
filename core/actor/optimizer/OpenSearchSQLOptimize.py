@@ -10,6 +10,7 @@ from core.actor.optimizer.BaseOptimize import BaseOptimizer
 from core.data_manage import Dataset, load_dataset, save_dataset
 from core.db_connect import get_sql_exec_result
 from core.utils import sql_clean
+from core.evidence import submit_with_evidence
 
 @BaseOptimizer.register_actor
 class OpenSearchSQLOptimizer(BaseOptimizer):
@@ -206,7 +207,7 @@ Answer in the following format:
         optimized_sqls = []
         if self.open_parallel and len(sql_list) > 1:
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                futures = [executor.submit(process_sql, sql) for sql in sql_list]
+                futures = [submit_with_evidence(executor, process_sql, sql) for sql in sql_list]
                 for future in as_completed(futures):
                     optimized_sqls.append(future.result())
         else:
@@ -221,4 +222,4 @@ Answer in the following format:
             data_logger.info(f"{self.NAME}.optimized_sql | output={optimized_sqls}")
             data_logger.info(f"{self.NAME}.act end | item={item}")
             
-        return output 
+        return output

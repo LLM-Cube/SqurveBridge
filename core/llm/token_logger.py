@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Callable, Dict, Iterable, Iterator, Optional
 
 
 _thread_context = threading.local()
@@ -21,10 +21,10 @@ _logical_call_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar
 _attempt_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("attempt_id", default=None)
 
 
-def observe_llm_call(fn):
+def observe_llm_call(fn: Callable[..., Any]) -> Callable[..., Any]:
     """Record one observable provider attempt without inferring hidden retries."""
     @functools.wraps(fn)
-    def wrapped(self, *args, **kwargs):
+    def wrapped(self: Any, *args: Any, **kwargs: Any) -> Any:
         try:
             from core.evidence import current_run, identity
             run = current_run()
@@ -64,10 +64,10 @@ def observe_llm_call(fn):
     return wrapped
 
 
-def observe_llm_stream_call(fn):
+def observe_llm_stream_call(fn: Callable[..., Iterator[Any]]) -> Callable[..., Iterator[Any]]:
     """Keep attempt identity active until a stream is fully consumed or fails."""
     @functools.wraps(fn)
-    def wrapped(self, *args, **kwargs):
+    def wrapped(self: Any, *args: Any, **kwargs: Any) -> Iterator[Any]:
         try:
             from core.evidence import current_run, identity
             run = current_run()
@@ -158,12 +158,14 @@ def append_llm_tag(part: str):
         set_llm_tag(previous)
 
 
-def _read_usage_value(usage: Any, key: str) -> int:
+def _read_optional_usage_value(usage: Any, key: str) -> Optional[int]:
     if usage is None:
-        return 0
+        return None
     if isinstance(usage, dict):
-        return int(usage.get(key) or 0)
-    return int(getattr(usage, key, 0) or 0)
+        value = usage.get(key)
+    else:
+        value = getattr(usage, key, None)
+    return None if value is None else int(value)
 
 
 def _percentile(values: Iterable[int], percentile: float) -> float:
@@ -196,10 +198,19 @@ class TokenLogger:
             _global_loggers.append(self)
 
     def record(self, usage: Any, model: Optional[str] = None, tag: Optional[str] = None) -> None:
-        prompt_tokens = _read_usage_value(usage, "prompt_tokens")
-        completion_tokens = _read_usage_value(usage, "completion_tokens")
-        total_tokens = _read_usage_value(usage, "total_tokens") or prompt_tokens + completion_tokens
-        if total_tokens <= 0:
+        reported_prompt_tokens = _read_optional_usage_value(usage, "prompt_tokens")
+        reported_completion_tokens = _read_optional_usage_value(usage, "completion_tokens")
+        reported_total_tokens = _read_optional_usage_value(usage, "total_tokens")
+        prompt_tokens = reported_prompt_tokens or 0
+        completion_tokens = reported_completion_tokens or 0
+        if reported_total_tokens is not None:
+            total_tokens = reported_total_tokens
+        elif reported_prompt_tokens is not None and reported_completion_tokens is not None:
+            total_tokens = reported_prompt_tokens + reported_completion_tokens
+        else:
+            total_tokens = 0
+        if (reported_prompt_tokens is None and reported_completion_tokens is None
+                and reported_total_tokens is None):
             return
 
         record = {
@@ -218,11 +229,21 @@ class TokenLogger:
             from core.evidence import current_run
             run = current_run()
             if run is not None:
-                run.event("usage.reported", scope="provider_observation", source="provider_sdk",
-                          logical_call_id=_logical_call_id.get(), attempt_id=_attempt_id.get(),
+                logical_call_id = _logical_call_id.get()
+                attempt_id = _attempt_id.get()
+                reported_usage = {
+                    key: value
+                    for key, value in {
+                        "prompt_tokens": reported_prompt_tokens,
+                        "completion_tokens": reported_completion_tokens,
+                        "total_tokens": total_tokens,
+                    }.items()
+                    if value is not None
+                }
+                run.event("usage.reported", scope="attempt" if attempt_id else "provider_observation",
+                          source="provider_sdk", logical_call_id=logical_call_id, attempt_id=attempt_id,
                           retry_observability="opaque",
-                          model=model, tag=record["tag"], prompt_tokens=prompt_tokens,
-                          completion_tokens=completion_tokens, total_tokens=total_tokens)
+                          model=model, tag=record["tag"], usage=reported_usage)
         except Exception:
             pass
 

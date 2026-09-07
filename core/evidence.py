@@ -13,7 +13,6 @@ from contextlib import contextmanager
 from functools import wraps
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping
-from concurrent.futures import ThreadPoolExecutor
 
 SCHEMA_VERSION = 1
 _current: contextvars.ContextVar[EvidenceRun | None] = contextvars.ContextVar("evidence_run", default=None)
@@ -183,6 +182,7 @@ class EvidenceRun:
         self.prior_segment = prior_segment
         self.checkpoint_ref = checkpoint_ref
         self._candidates_by_sql: dict[str, list[dict[str, Any]]] = {}
+        self._candidate_pools: dict[int, tuple[Any, list[dict[str, Any]]]] = {}
         required = set(self.collection_config.values["required_fields"])
         enabled_value = self.collection_config.values["enabled_fields"]
         enabled = set(enabled_value or [])
@@ -303,7 +303,7 @@ class EvidenceRun:
         if self._enqueue(f"segments/{self.segment_id}/events/{event_id}.json", record):
             with self._lock:
                 self._count += 1
-                self._observed_fields.update(facts)
+                self._observed_fields.update(key for key, value in facts.items() if value is not None)
             return event_id
         return None
 
@@ -374,6 +374,22 @@ class EvidenceRun:
         self.event("candidate.provenance", candidate_occurrence_id=candidate["candidate_occurrence_id"],
                    producer_attribution="unattributed")
         return candidate
+
+    def candidates_for_pool(self, sql_values: list[str], pool_object: Any = None) -> list[dict[str, Any]]:
+        known_pool = self._candidate_pools.get(id(pool_object)) if pool_object is not None else None
+        if known_pool is not None and known_pool[0] is pool_object:
+            return list(known_pool[1])
+        used: dict[str, int] = {}
+        pool: list[dict[str, Any]] = []
+        for sql in sql_values:
+            offset = used.get(sql, 0)
+            known = self._candidates_by_sql.get(sql, [])
+            candidate = known[offset] if offset < len(known) else self.candidate_for_input(sql)
+            used[sql] = offset + 1
+            pool.append(candidate)
+        if pool_object is not None:
+            self._candidate_pools[id(pool_object)] = (pool_object, list(pool))
+        return pool
 
     def logical_call(self, kind: str, **facts: Any) -> dict[str, Any]:
         logical_call_id = identity()
@@ -541,9 +557,31 @@ def current_span_id() -> str | None:
 
 
 def submit_with_evidence(executor: Any, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-    """Propagate context only at Squrve-owned executor boundaries."""
+    """Record and propagate an explicitly created Squrve runtime task."""
+    run = current_run()
+    if run is None:
+        return executor.submit(fn, *args, **kwargs)
     context = contextvars.copy_context()
-    return executor.submit(context.run, fn, *args, **kwargs)
+    scheduling_span_id = current_span_id()
+    task_id = run.task_created()
+    run.workflow_event("scheduled", task_id=task_id, scheduled_by_span_id=scheduling_span_id)
+
+    def invoke() -> Any:
+        run.workflow_event("started", task_id=task_id)
+        try:
+            result = fn(*args, **kwargs)
+        except BaseException as exc:
+            run.workflow_event(
+                "finished",
+                task_id=task_id,
+                execution_status="failed",
+                error_type=type(exc).__name__,
+            )
+            raise
+        run.workflow_event("finished", task_id=task_id, execution_status="success")
+        return result
+
+    return executor.submit(context.run, invoke)
 
 
 def _sql_values(value: Any) -> list[str]:
@@ -556,7 +594,8 @@ def _sql_values(value: Any) -> list[str]:
 
 def _record_actor_specific(run: EvidenceRun, fn: Callable[..., Any], actor: Any, item: Any,
                            args: tuple[Any, ...], kwargs: Mapping[str, Any], result: Any,
-                           span_id: str, category: str, output_ref: str | None) -> None:
+                           span_id: str, category: str, output_ref: str | None,
+                           dataset_manifest: Mapping[str, Any], dataset_sql_inputs: list[str]) -> None:
     try:
         bound = inspect.signature(fn).bind_partial(actor, item, *args, **kwargs)
         inputs = {key: value for key, value in bound.arguments.items() if key not in {"self", "item"}}
@@ -564,9 +603,10 @@ def _record_actor_specific(run: EvidenceRun, fn: Callable[..., Any], actor: Any,
         inputs = dict(kwargs)
     input_manifest = {name: {"availability": Availability.PRESENT, "value_ref": run.value_ref(value)}
                       for name, value in inputs.items()}
+    input_manifest.update(dataset_manifest)
     run.event("actor.input_manifest", actor_category=category, fields=input_manifest)
 
-    sql_inputs = _sql_values(inputs.get("pred_sql"))
+    sql_inputs = _sql_values(inputs.get("pred_sql")) or dataset_sql_inputs
     sql_outputs = _sql_values(result)
     if isinstance(result, Mapping):
         sql_outputs = _sql_values(result.get("pred_sql") or result.get("sql") or result.get("SQL")
@@ -574,17 +614,19 @@ def _record_actor_specific(run: EvidenceRun, fn: Callable[..., Any], actor: Any,
 
     if category == "generator":
         candidates = [run.candidate(sql, producer_span_id=span_id) for sql in sql_outputs]
+        if isinstance(result, (list, tuple)):
+            run._candidate_pools[id(result)] = (result, list(candidates))
         run.event("generator.output", candidate_ids=[c["candidate_occurrence_id"] for c in candidates],
                   output_ref=output_ref)
     elif category == "scaler":
-        input_candidates = [run.candidate_for_input(sql) for sql in sql_inputs]
+        input_candidates = run.candidates_for_pool(sql_inputs, inputs.get("pred_sql"))
         produced = [run.candidate(sql, producer_span_id=span_id,
                                   parent_candidate_id=input_candidates[0]["candidate_occurrence_id"]
                                   if len(input_candidates) == 1 else None) for sql in sql_outputs]
         run.event("scaler.output", input_candidate_ids=[c["candidate_occurrence_id"] for c in input_candidates],
                   produced_candidate_ids=[c["candidate_occurrence_id"] for c in produced])
     elif category == "optimizer":
-        input_candidates = [run.candidate_for_input(sql) for sql in sql_inputs]
+        input_candidates = run.candidates_for_pool(sql_inputs, inputs.get("pred_sql"))
         attempts = []
         if len(input_candidates) == 1 and len(sql_outputs) == 1:
             attempts.append(run.optimization_attempt(input_candidates[0], sql_outputs[0]))
@@ -596,10 +638,12 @@ def _record_actor_specific(run: EvidenceRun, fn: Callable[..., Any], actor: Any,
         if attempts:
             run.event("optimizer.output", attempts=attempts)
     elif category == "selector":
-        pool = [run.candidate_for_input(sql) for sql in sql_inputs]
-        selected = next((c for c in pool if c["sql_text"] in sql_outputs), None)
+        pool = run.candidates_for_pool(sql_inputs, inputs.get("pred_sql"))
+        selected_indices = [index for index, sql in enumerate(sql_inputs) if sql in sql_outputs]
+        selected = pool[selected_indices[0]] if len(selected_indices) == 1 else None
         run.event("selector.decision", ordered_candidate_pool=[c["candidate_occurrence_id"] for c in pool],
                   selected_candidate_id=selected["candidate_occurrence_id"] if selected else None,
+                  selection_identity="explicit" if selected else "ambiguous",
                   consumption="unknown")
     elif category in {"parser", "reducer"}:
         structured_ref = output_ref or (run.artifact(result) if result is not None else None)
@@ -634,6 +678,19 @@ def instrument_actor(fn: Callable[..., Any]) -> Callable[..., Any]:
         token = _span.set(span_id)
         actor_token = _actor.set(id(self))
         start = time.monotonic_ns()
+        dataset_manifest: dict[str, Any] = {}
+        dataset_sql_inputs: list[str] = []
+        dataset = getattr(self, "dataset", None)
+        if dataset is not None and isinstance(item, int):
+            try:
+                row = dataset[item]
+                for key in ("query", "pred_sql", "gold_schemas", "instance_schemas", "schema_links", "sub_questions"):
+                    if key in row:
+                        dataset_manifest[key] = {"availability": Availability.PRESENT,
+                                                 "value_ref": run.value_ref(row[key])}
+                dataset_sql_inputs = list(_sql_values(row.get("pred_sql")))
+            except (IndexError, KeyError, TypeError):
+                pass
         try:
             result = fn(self, item, *args, **kwargs)
         except BaseException as exc:
@@ -644,7 +701,8 @@ def instrument_actor(fn: Callable[..., Any]) -> Callable[..., Any]:
             duration = time.monotonic_ns() - start
             output_ref = run.artifact(result) if run.capture_outputs else None
             category = type(self).__module__.split(".")[-2] if "." in type(self).__module__ else "unknown"
-            _record_actor_specific(run, fn, self, item, args, kwargs, result, span_id, category, output_ref)
+            _record_actor_specific(run, fn, self, item, args, kwargs, result, span_id, category, output_ref,
+                                   dataset_manifest, dataset_sql_inputs)
             run.event("actor.finished", span_id=span_id, execution_status="success",
                       duration_ns=duration, output_ref=output_ref)
             return result
@@ -702,10 +760,21 @@ def read_evidence(directory: str | Path) -> dict[str, Any]:
         except (ValueError, OSError):
             invalid = True
             issues.append("invalid_artifact")
-    started = {e["span_id"] for e in events if isinstance(e.get("type"), str)
-               and e["type"].endswith(".started") and "span_id" in e}
-    ended = {e["span_id"] for e in events if isinstance(e.get("type"), str)
-             and e["type"].endswith(".finished") and "span_id" in e}
+    def lifecycle_key(event: Mapping[str, Any]) -> tuple[str, str, str] | None:
+        event_type = event.get("type")
+        if not isinstance(event_type, str) or not event_type.endswith((".started", ".finished")):
+            return None
+        base_type = event_type.rsplit(".", 1)[0]
+        for key in ("span_id", "attempt_id", "operation_id", "logical_call_id", "task_id"):
+            value = event.get(key)
+            if isinstance(value, str):
+                return base_type, key, value
+        return None
+
+    started = {key for event in events if event.get("type", "").endswith(".started")
+               if (key := lifecycle_key(event)) is not None}
+    ended = {key for event in events if event.get("type", "").endswith(".finished")
+             if (key := lifecycle_key(event)) is not None}
     if started - ended:
         issues.append("unobserved_completion")
     for event in events:
@@ -745,6 +814,17 @@ def evaluate_evidence(directory: str | Path, evidence_values: Mapping[str, Any],
     """Offline metric dependency and acceptance evaluation over persisted evidence."""
     bundle = read_evidence(directory)
     metrics = evaluate_metric_dependencies(evidence_values, profile)
+    db_events = [event for event in bundle["events"] if event.get("type") == "db.finished"]
+    incomplete_results = any(
+        event.get("fetch_completeness") != "complete"
+        or event.get("preservation_completeness") != "complete"
+        for event in db_events
+    )
+    if incomplete_results:
+        for metric, dependencies in profile.values["metric_dependencies"].items():
+            if any("result" in dependency for dependency in dependencies):
+                metrics[metric]["status"] = "unavailable"
+                metrics[metric].setdefault("missing", []).append("complete_result_evidence")
     if bundle["evidence_status"] in {"invalid", "unavailable"}:
         for result in metrics.values():
             result["status"] = "unavailable"
@@ -753,38 +833,3 @@ def evaluate_evidence(directory: str | Path, evidence_values: Mapping[str, Any],
     return {"execution_status": bundle["execution_status"], "evidence_status": bundle["evidence_status"],
             "evaluation_status": "accepted" if gate["accepted"] else "rejected",
             "metrics": metrics, "acceptance": gate, "profile_version": profile.version}
-
-
-_original_thread_pool_submit = ThreadPoolExecutor.submit
-
-
-def _evidence_submit(self: ThreadPoolExecutor, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
-    run = current_run()
-    if run is None:
-        return _original_thread_pool_submit(self, fn, *args, **kwargs)
-    context = contextvars.copy_context()
-    task_id = run.task_created(parent_task_id=None) if run else None
-    if run:
-        run.workflow_event("scheduled", task_id=task_id)
-
-    def invoke() -> Any:
-        if run:
-            run.workflow_event("started", task_id=task_id)
-        try:
-            result = fn(*args, **kwargs)
-        except BaseException as exc:
-            if run:
-                run.workflow_event("finished", task_id=task_id, execution_status="failed",
-                                   error_type=type(exc).__name__)
-            raise
-        else:
-            if run:
-                run.workflow_event("finished", task_id=task_id, execution_status="success")
-            return result
-
-    return _original_thread_pool_submit(self, context.run, invoke)
-
-
-if not getattr(ThreadPoolExecutor.submit, "_squrve_evidence", False):
-    _evidence_submit._squrve_evidence = True  # type: ignore[attr-defined]
-    ThreadPoolExecutor.submit = _evidence_submit  # type: ignore[method-assign,assignment]
