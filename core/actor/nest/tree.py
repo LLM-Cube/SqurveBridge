@@ -11,6 +11,7 @@ from core.actor.base import ComplexActor, Actor, MergeStrategy, MergeFunction
 from core.actor.generator import BaseGenerator
 from core.data_manage import update_dataset
 from core.trace import record_actor_trace, snapshot_row
+from core.evidence import submit_with_evidence
 from reproduce.metrics.snapshots import capture_pred_sql_snapshot
 
 
@@ -196,7 +197,7 @@ class TreeActor(ComplexActor):
                         )
                         raise
 
-                futures[executor.submit(traced_act)] = actor
+                futures[submit_with_evidence(executor, traced_act)] = actor
 
             completed_count = 0
             for future in as_completed(futures):
@@ -301,7 +302,7 @@ class ActorGroup(TreeActor):
                         )
                         raise
 
-                futures[executor.submit(traced_group_act)] = actor
+                futures[submit_with_evidence(executor, traced_group_act)] = actor
 
             completed_count = 0
             for future in as_completed(futures):

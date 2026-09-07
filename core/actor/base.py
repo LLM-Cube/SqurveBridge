@@ -8,6 +8,13 @@ from loguru import logger
 
 
 class Actor(ABC):
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        method = cls.__dict__.get("act")
+        if method is not None and not getattr(method, "__isabstractmethod__", False):
+            from core.evidence import instrument_actor
+            cls.act = instrument_actor(method)
+
     NAME: str
     OUTPUT_NAME: str
     STRATEGY: str

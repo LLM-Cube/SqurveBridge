@@ -10,6 +10,7 @@ from core.task.base import BaseTask, wrap_run, TaskCompletion
 from core.actor.base import Actor
 from core.llm.token_logger import llm_tag
 from core.trace import record_actor_trace, snapshot_row
+from core.evidence import submit_with_evidence
 from core.utils import load_dataset
 
 
@@ -172,7 +173,7 @@ class MetaTask(BaseTask):
                 logger.info(f"跳过 {skipped} 个已完成样本 (resume)")
         logger.info(f"使用线程池执行任务，最大工作线程数: {self.max_workers}")
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            futures = {executor.submit(safe_act, i): i for i in range(len(self.dataset))}
+            futures = {submit_with_evidence(executor, safe_act, i): i for i in range(len(self.dataset))}
             completed_count = skipped
             for future in as_completed(futures):
                 res = future.result()

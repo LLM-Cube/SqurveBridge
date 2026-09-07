@@ -2,6 +2,7 @@ import warnings
 
 from core.task.multi.MultiTask import MultiTask
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from core.evidence import submit_with_evidence
 
 
 def _run_task(task):
@@ -32,7 +33,7 @@ class ParallelTask(MultiTask):
         max_workers = min(len(self.tasks), 8)
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [executor.submit(_run_task, task) for task in self.tasks]
+            futures = [submit_with_evidence(executor, _run_task, task) for task in self.tasks]
             for future in as_completed(futures):
                 try:
                     future.result()

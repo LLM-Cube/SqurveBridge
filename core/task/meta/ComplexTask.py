@@ -11,6 +11,7 @@ from core.actor.nest.pipeline import PipelineActor
 from core.data_manage import update_dataset
 from core.llm.token_logger import llm_tag
 from core.trace import record_actor_trace, snapshot_row
+from core.evidence import submit_with_evidence
 from core.task.base import TaskCompletion
 from core.task.meta.MetaTask import MetaTask
 
@@ -249,7 +250,7 @@ class ComplexTask(MetaTask):
                 data_logger.save()
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            futures = {executor.submit(safe_act, i): i for i in range(stage_size)}
+            futures = {submit_with_evidence(executor, safe_act, i): i for i in range(stage_size)}
             completed_count = skipped
             for future in as_completed(futures):
                 res = future.result()
@@ -404,7 +405,7 @@ class ComplexTask(MetaTask):
                     data_logger.save()
 
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                futures = {executor.submit(safe_act, i): i for i in range(stage_size)}
+                futures = {submit_with_evidence(executor, safe_act, i): i for i in range(stage_size)}
                 completed_count = skipped
                 for future in as_completed(futures):
                     res = future.result()
