@@ -11,7 +11,25 @@ const QUALITY_METRICS = [
 const TABLE_METRICS = ['ex', 'em', 'sf1', 'sc', 'ves', 'rves']
 const CF1_KEYS = ['select', 'where', 'group', 'order', 'join', 'keywords', 'iuen']
 
-const metricAverage = value => (typeof value === 'number' ? value : value?.avg)
+const metricAverage = value => (typeof value === 'number' ? value : value?.avg ?? (value?.status === 'available' ? value?.value : null))
+
+const normalizeScoreBundle = scores => {
+  if (scores?.schema_version !== 2) return scores
+  const source = scores.aggregate || {}
+  const aliases = { ex: 'ex_at_1', em: 'structural_match', sc: 'self_consistency' }
+  const aggregate = { ...source }
+  TABLE_METRICS.forEach(metric => {
+    const cell = source[aliases[metric] || metric]
+    if (cell) aggregate[metric] = {
+      ...cell,
+      avg: cell.status === 'available' ? cell.value : null,
+      valid: cell.denominator,
+      total: scores.samples?.length,
+      pass_count: cell.numerator,
+    }
+  })
+  return { ...scores, aggregate, sample_count: scores.samples?.length ?? 0, scope: scores.candidate_protocol }
+}
 const percent = (value, digits = 1) => (value == null || Number.isNaN(value) ? '—' : `${(value * 100).toFixed(digits)}%`)
 const pp = (value, digits = 1) => {
   if (value == null || Number.isNaN(value)) return '—'
@@ -978,6 +996,7 @@ export default function ExperimentBoard({
           scores = file?.json || null
         }
         if (scores) {
+          scores = normalizeScoreBundle(scores)
           setPayload({
             runs: [{
               ...scores,

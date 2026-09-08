@@ -45,6 +45,10 @@ class MetricSpec:
     publication: str = "public"
     sliceable: bool = True
     description: str = ""
+    protocol_id: str = "legacy.project-metric"
+    protocol_version: str = "1"
+    candidate_scope: str = "legacy_implicit"
+    availability: str = "computed_when_evidence_available"
 
     def __post_init__(self) -> None:
         if self.layer not in LAYERS:

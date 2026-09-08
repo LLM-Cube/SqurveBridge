@@ -156,6 +156,58 @@ def get_sql_exec_result_with_time(db_type: str, **kwargs):
     return elapsed, res
 
 
+def execute_sql_observation(db_type: str, *, sql_query: str, db_path: str | PathLike,
+                            clock=time.monotonic) -> dict:
+    """Core-safe typed execution facts for offline evaluators.
+
+    This boundary does not import evaluation code.  Unsupported backends are
+    explicit; callers that need native timeout/cancellation semantics must use
+    a backend adapter that can actually observe them.
+    """
+    if db_type != "sqlite":
+        return {"status": "unsupported", "backend": db_type, "dialect": db_type,
+                "backend_error_code": "unsupported_typed_execution",
+                "backend_error_source": "core.db_connect"}
+    started = clock()
+    conn = None
+    try:
+        connection_started = clock()
+        database_uri = Path(db_path).resolve().as_uri() + "?mode=ro"
+        conn = sqlite3.connect(database_uri, uri=True)
+        connection_s = clock() - connection_started
+        query_started = clock()
+        cursor = conn.execute(sql_query)
+        query_s = clock() - query_started
+        columns = [str(item[0]) for item in (cursor.description or [])]
+        fetch_started = clock()
+        raw_rows = cursor.fetchall()
+        fetch_s = clock() - fetch_started
+        materialization_started = clock()
+        rows = [tuple(row) for row in raw_rows]
+        materialization_s = clock() - materialization_started
+        return {
+            "status": "success", "backend": "sqlite", "dialect": "sqlite",
+            "rows": rows, "columns": columns, "execution_complete": True,
+            "fetch_complete": True, "preservation_complete": True,
+            "observed_row_count": len(rows), "known_total_row_count": len(rows),
+            "timing": {"query_s": query_s, "connection_s": connection_s, "fetch_s": fetch_s,
+                       "materialization_s": materialization_s,
+                       "total_s": clock() - started, "clock": "monotonic"},
+        }
+    except sqlite3.Error as exc:
+        return {
+            "status": "execution_error", "backend": "sqlite", "dialect": "sqlite",
+            "backend_error_code": getattr(exc, "sqlite_errorname", exc.__class__.__name__),
+            "backend_error_source": "sqlite", "error_type": exc.__class__.__name__,
+            "error_message": str(exc),
+            "timing": {"total_s": clock() - started, "clock": "monotonic",
+                       "scope": "connection+query+fetch+materialization"},
+        }
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def execute_sql(db_type, db_path, sql, credential):
     if db_type not in ["sqlite", "snowflake", "big_query"]:
         return "Unsupported db_type"

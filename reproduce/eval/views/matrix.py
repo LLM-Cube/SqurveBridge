@@ -18,6 +18,7 @@ Everything is deterministic dictionary math over recorded runs; no LLM calls.
 from __future__ import annotations
 
 from collections import defaultdict
+from contextlib import closing
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -48,6 +49,7 @@ class MethodMatrix:
             }
             for method in self.methods
         }
+        self.cohort: Dict[str, Any] | None = None
 
     @classmethod
     def from_store(
@@ -60,6 +62,91 @@ class MethodMatrix:
         correctness = load_sample_metric(db_path, "ex", dataset=dataset, split=split)
         latency = load_sample_metric(db_path, "act_elapsed_s", dataset=dataset, split=split)
         return cls(correctness, latency)
+
+    @classmethod
+    def from_v2_runs(cls, db_path: str | Path, run_ids: List[str], *,
+                     allowed_differences: set[str] | None = None) -> "MethodMatrix":
+        """Build from explicit runs after validating their complete cohort descriptors."""
+        import json
+        import sqlite3
+
+        from reproduce.eval.protocol import CohortDescriptor, compare_bundles
+        from reproduce.eval.views.store import load_v2_run_metric
+
+        if not run_ids:
+            raise ValueError("at least one explicit run_id is required")
+        declared_differences = set(allowed_differences or set())
+        descriptors = []
+        methods = []
+        selected_metric_protocols: list[tuple[str, str]] = []
+        with closing(sqlite3.connect(db_path)) as conn:
+            for run_id in run_ids:
+                row = conn.execute(
+                    "SELECT r.method, r.dataset, r.split, c.database_snapshot, c.candidate_protocol, "
+                    "c.evaluator_protocol, c.model_config_id, c.sample_ids_json "
+                    "FROM runs r JOIN run_cohorts_v2 c ON c.run_id=r.run_id WHERE r.run_id=?", (run_id,)
+                ).fetchone()
+                if row is None:
+                    raise ValueError(f"missing v2 cohort for run: {run_id}")
+                method, dataset, split, snapshot, candidate_protocol, evaluator_protocol, model, ids = row
+                if method in methods:
+                    raise ValueError(f"duplicate method in cohort: {method}")
+                methods.append(method)
+                descriptors.append(CohortDescriptor(
+                    dataset=dataset, split=split, database_snapshot=snapshot,
+                    candidate_protocol=candidate_protocol, evaluator_protocol=evaluator_protocol,
+                    model_config=model, sample_ids=json.loads(ids),
+                ))
+                identities = conn.execute(
+                    "SELECT DISTINCT protocol_id, protocol_version FROM metric_results_v2 "
+                    "WHERE run_id=? AND metric_id='selected_ex'", (run_id,),
+                ).fetchall()
+                if len(identities) != 1:
+                    raise ValueError(f"selected_ex protocol identity is incomplete in run: {run_id}")
+                selected_metric_protocols.append((str(identities[0][0]), str(identities[0][1])))
+        base = descriptors[0]
+        comparisons = [compare_bundles(base, item, allowed_differences=declared_differences)
+                       for item in descriptors[1:]]
+        failures = [reason for comparison in comparisons for reason in comparison.reasons]
+        if failures:
+            raise ValueError("incompatible v2 cohort: " + ",".join(sorted(set(failures))))
+        if ("evaluator_protocol" not in declared_differences
+                and len(set(selected_metric_protocols)) != 1):
+            raise ValueError("incompatible v2 cohort: selected_ex_protocol_mismatch")
+        with closing(sqlite3.connect(db_path)) as conn:
+            for run_id in run_ids:
+                rows = conn.execute(
+                    "SELECT a.instance_id, a.candidate_ids_json, b.candidate_ids_json "
+                    "FROM metric_results_v2 a JOIN metric_results_v2 b "
+                    "ON a.run_id=b.run_id AND a.instance_id=b.instance_id "
+                    "WHERE a.run_id=? AND a.metric_id='selected_ex' "
+                    "AND b.metric_id='sql_execution_time'", (run_id,)
+                ).fetchall()
+                if any(correct_ids != latency_ids for _instance, correct_ids, latency_ids in rows):
+                    raise ValueError(f"candidate evidence mismatch in run: {run_id}")
+        correctness = {method: load_v2_run_metric(db_path, run_id, "selected_ex")
+                       for method, run_id in zip(methods, run_ids)}
+        latency = {method: load_v2_run_metric(db_path, run_id, "sql_execution_time")
+                   for method, run_id in zip(methods, run_ids)}
+        matrix = cls(correctness, latency)
+        union = set().union(*(set(item.sample_ids) for item in descriptors))
+        matrix.cohort = {
+            "run_ids": run_ids, "common_set_size": len(matrix.query_ids),
+            "excluded_sample_count": len(union - set(matrix.query_ids)),
+            "latency_coverage": {
+                method: len(matrix.latency[method]) / len(matrix.query_ids) if matrix.query_ids else 0
+                for method in matrix.methods
+            },
+            "empirical_upper_bound_scope": "declared_cohort_and_evaluated_methods",
+            "correctness_metric": "selected_ex",
+            "latency_metric": "sql_execution_time",
+            "allowed_differences": sorted(declared_differences),
+            "selected_ex_protocols": {
+                method: {"protocol_id": identity[0], "protocol_version": identity[1]}
+                for method, identity in zip(methods, selected_metric_protocols)
+            },
+        }
+        return matrix
 
 
 def oracle_gap(matrix: MethodMatrix) -> Dict[str, Any]:
@@ -167,4 +254,5 @@ def matrix_report(matrix: MethodMatrix) -> Dict[str, Any]:
         "empirical_difficulty": empirical_difficulty(matrix)["histogram"],
         "uniquely_solved": uniquely_solved(matrix)["counts"],
         "efficiency_headroom": efficiency_headroom(matrix),
+        "cohort": matrix.cohort,
     }
