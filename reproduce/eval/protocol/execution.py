@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import time
 from typing import Any, Callable, Literal
 
@@ -69,7 +70,13 @@ class SQLExecutor:
     def reuse_key(sql: str, database_snapshot: str, dialect: str,
                   credential_scope: str, session_settings: str) -> str | None:
         normalized = sql.lower()
-        if any(token in normalized for token in ("random(", "current_timestamp", "datetime('now", "strftime('%s','now")):
+        nondeterministic = re.compile(
+            r"\b(?:random|randomblob)\s*\(|"
+            r"\bcurrent_(?:date|time|timestamp)\b|"
+            r"\b(?:date|time|datetime|julianday|unixepoch|strftime)\s*\("
+            r"(?:\s*\)|[^)]*['\"]now['\"])"
+        )
+        if nondeterministic.search(normalized):
             return None
         data = "\0".join((sql, database_snapshot, dialect, credential_scope, session_settings))
         return hashlib.sha256(data.encode()).hexdigest()
@@ -113,6 +120,6 @@ class SQLExecutor:
             database_snapshot=database_snapshot, reuse_key=key,
             timing=ExecutionTiming.model_validate(observed_timing), **observed,
         )
-        if use_cache and not efficiency_measurement and key is not None:
+        if use_cache and not efficiency_measurement and key is not None and result.comparable:
             self._cache[key] = result
         return result

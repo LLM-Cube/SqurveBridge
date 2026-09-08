@@ -18,6 +18,14 @@ from .models import (Candidate, ComparisonPolicy, EvaluationBundleV2, MetricResu
 from .metrics import TimingObservation, TokenObservation
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _schema_mapping(value: Any) -> dict[str, set[str]] | None:
     if not isinstance(value, dict):
         return None
@@ -195,10 +203,20 @@ def evaluate_checkpoint(checkpoint_path: str | Path, config: dict[str, Any],
     snapshot_by_path: dict[str, str] = {}
     for db_path in db_paths:
         db_file = Path(db_path)
-        snapshot_by_path[db_path] = (hashlib.sha256(db_file.read_bytes()).hexdigest()
+        snapshot_by_path[db_path] = (_sha256_file(db_file)
                                      if db_file.is_file() else "missing")
-    snapshot = raw.get("database_snapshot") or hashlib.sha256(
-        "\0".join(f"{key}:{snapshot_by_path[key]}" for key in db_paths).encode()).hexdigest()
+    database_manifest = sorted(
+        (str(sample.get("instance_id")),
+         snapshot_by_path.get(str(sample.get("db_path")), "missing"))
+        for sample in raw.get("samples") or []
+    )
+    manifest_identity = (hashlib.sha256(
+        "\0".join(f"{instance_id}:{content_hash}"
+                   for instance_id, content_hash in database_manifest).encode()
+    ).hexdigest() if database_manifest else None)
+    declared_snapshot = str(raw["database_snapshot"]) if raw.get("database_snapshot") else None
+    snapshot = (hashlib.sha256(f"{declared_snapshot or ''}\0{manifest_identity}".encode()).hexdigest()
+                if manifest_identity else declared_snapshot or "unknown")
     samples: list[SampleEvaluation] = []
     for sample in raw.get("samples") or []:
         instance_id = str(sample["instance_id"])
@@ -209,8 +227,8 @@ def evaluate_checkpoint(checkpoint_path: str | Path, config: dict[str, Any],
                                 parent_candidate_id=item.get("parent_candidate_id"))
                       for index, item in enumerate(sample.get("candidates") or [])]
         gold_sql = sample.get("gold_sql")
-        sample_snapshot = (f"{raw['database_snapshot']}:{sample['db_path']}"
-                           if raw.get("database_snapshot") else snapshot_by_path.get(str(sample.get("db_path")), "missing"))
+        database_content = snapshot_by_path.get(str(sample.get("db_path")), "missing")
+        sample_snapshot = hashlib.sha256(f"{snapshot}\0{database_content}".encode()).hexdigest()
         if gold_sql:
             gold = executor.execute_sqlite(sample["db_path"], gold_sql, run_id=raw["run_id"],
                                            instance_id=instance_id, candidate_id="__gold__",
@@ -399,25 +417,40 @@ def evaluate_checkpoint(checkpoint_path: str | Path, config: dict[str, Any],
         )
     outcome_distribution: dict[str, int] = {}
     failure_bottlenecks: dict[str, int] = {}
+    selected_attribution_count = 0
     for sample in samples:
         for attribution in sample.attribution:
             if attribution.get("candidate_id") != sample.selected_candidate_id:
                 continue
+            selected_attribution_count += 1
             label = str(attribution.get("primary_label") or "unknown")
             outcome_distribution[label] = outcome_distribution.get(label, 0) + 1
             if label != "success":
                 failure_bottlenecks[label] = failure_bottlenecks.get(label, 0) + 1
-    if samples:
+    attribution_coverage = selected_attribution_count / len(samples) if samples else 0
+    if selected_attribution_count:
         aggregate["error_root_distribution"] = MetricResult(
             metric_id="error_root_distribution", protocol_id="project.failure-bottleneck-distribution",
             protocol_version="2", status="available", categorical_counts=failure_bottlenecks,
-            coverage=1, candidate_scope="selected", value_domain="unbounded",
+            coverage=attribution_coverage, denominator=selected_attribution_count,
+            candidate_scope="selected", value_domain="unbounded",
         )
         aggregate["stage_attribution"] = MetricResult(
             metric_id="stage_attribution", protocol_id="project.attribution-outcome-distribution",
             protocol_version="2", status="available", categorical_counts=outcome_distribution,
-            coverage=1, candidate_scope="selected", value_domain="unbounded",
+            coverage=attribution_coverage, denominator=selected_attribution_count,
+            candidate_scope="selected", value_domain="unbounded",
         )
+    elif samples:
+        for metric_id, protocol_id in (
+                ("error_root_distribution", "project.failure-bottleneck-distribution"),
+                ("stage_attribution", "project.attribution-outcome-distribution")):
+            aggregate[metric_id] = MetricResult(
+                metric_id=metric_id, protocol_id=protocol_id, protocol_version="2",
+                status="unavailable", coverage=0, candidate_scope="selected",
+                value_domain="unbounded", reason="selected_candidate_evidence_unavailable",
+                unavailable_count=len(samples),
+            )
     from reproduce.eval.registry import default_registry
     for metric_spec in default_registry().metrics():
         if metric_spec.id in aggregate:

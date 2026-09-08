@@ -45,6 +45,12 @@ class ComparisonPolicy(StrictModel):
     empty_results_equal: bool = True
     max_column_mappings: int = Field(default=10000, ge=1, le=1_000_000)
 
+    @model_validator(mode="after")
+    def validate_tolerances(self) -> "ComparisonPolicy":
+        if not math.isfinite(self.absolute_tolerance) or not math.isfinite(self.relative_tolerance):
+            raise ValueError("comparison tolerances must be finite")
+        return self
+
 
 class MetricResult(StrictModel):
     metric_id: str = Field(min_length=1)
@@ -195,11 +201,23 @@ class EvaluationBundleV2(StrictModel):
             if not math.isclose(aggregate.coverage, expected_coverage, abs_tol=1e-12):
                 raise ValueError(f"{metric_id}: aggregate coverage contradicts sample statuses")
             if available:
-                expected = sum(record.value or 0 for record in available) / len(available)
-                if aggregate.status != Availability.AVAILABLE or aggregate.value is None:
-                    raise ValueError(f"{metric_id}: aggregate availability contradicts samples")
-                if not math.isclose(aggregate.value, expected, rel_tol=1e-9, abs_tol=1e-12):
-                    raise ValueError(f"{metric_id}: aggregate value contradicts samples")
+                categorical = [record for record in available if record.categorical_counts is not None]
+                if categorical:
+                    if len(categorical) != len(available):
+                        raise ValueError(f"{metric_id}: sample metric value kinds differ")
+                    expected_counts: dict[str, int] = {}
+                    for record in categorical:
+                        for label, count in (record.categorical_counts or {}).items():
+                            expected_counts[label] = expected_counts.get(label, 0) + count
+                    if (aggregate.status != Availability.AVAILABLE
+                            or aggregate.categorical_counts != expected_counts):
+                        raise ValueError(f"{metric_id}: aggregate categorical counts contradict samples")
+                else:
+                    expected = sum(record.value or 0 for record in available) / len(available)
+                    if aggregate.status != Availability.AVAILABLE or aggregate.value is None:
+                        raise ValueError(f"{metric_id}: aggregate availability contradicts samples")
+                    if not math.isclose(aggregate.value, expected, rel_tol=1e-9, abs_tol=1e-12):
+                        raise ValueError(f"{metric_id}: aggregate value contradicts samples")
                 if aggregate.denominator != len(available):
                     raise ValueError(f"{metric_id}: aggregate denominator contradicts samples")
             elif aggregate.status == Availability.AVAILABLE:
@@ -221,7 +239,8 @@ class EvaluationBundleV2(StrictModel):
                 protocol_version=record.protocol_version,
                 status="available" if is_available else "unavailable",
                 value=record.value if is_available else None,
-                numerator=record.value if is_available else None,
+                categorical_counts=record.categorical_counts if is_available else None,
+                numerator=(record.value if is_available and record.categorical_counts is None else None),
                 denominator=1 if is_available else None,
                 coverage=record.coverage,
                 candidate_scope=record.candidate_scope,

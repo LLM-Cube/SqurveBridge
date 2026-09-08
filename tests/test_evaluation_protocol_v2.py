@@ -6,6 +6,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from pydantic import ValidationError
 
@@ -36,6 +37,7 @@ from reproduce.eval.protocol import (
     register_builtin_spider_test_suite,
 )
 from reproduce.eval.bundle.schema import bundle_version, validate_bundle
+from reproduce.eval.bundle.compare import compare_scores
 from reproduce.eval.report import format_v2_report
 from reproduce.eval.views.evidence import sanitized_v2_export
 from reproduce.eval.views.store import load_v2_run_metric, persist_eval_store
@@ -44,7 +46,20 @@ from reproduce.eval.views.fitness import bundle_fitness
 
 
 class EvaluationProtocolV2Tests(unittest.TestCase):
+    def test_mixed_bundle_versions_are_reported_as_incompatible(self):
+        v1 = {"run_id": "legacy"}
+        v2 = EvaluationBundleV2(
+            run_id="typed", dataset="d", split="s", method="m", samples=[],
+        ).model_dump(mode="json", by_alias=True)
+
+        comparison = compare_scores(v1, v2)
+
+        self.assertEqual(comparison["status"], "incompatible_bundle_schema")
+        self.assertEqual(comparison["schema_versions"], {"previous": 1, "current": 2})
+
     def test_metric_contract_rejects_invalid_values_and_counts(self):
+        with self.assertRaises(ValidationError):
+            ComparisonPolicy(absolute_tolerance=float("inf"))
         with self.assertRaises(ValidationError):
             MetricResult(
                 metric_id="ex_at_1", protocol_id="project.ex", protocol_version="2",
@@ -463,6 +478,7 @@ class EvaluationProtocolV2Tests(unittest.TestCase):
             result = registry.evaluate(
                 "spider_test_suite",
                 {"database_path": str(root / "suite1.sqlite"),
+                 "dataset": "spider", "split": "dev",
                  "gold_sql": "select x from t where x > 0",
                  "predicted_sql": "select x from t where x > 0"},
                 enabled=True,
@@ -473,6 +489,7 @@ class EvaluationProtocolV2Tests(unittest.TestCase):
             suite_only_failure = registry.evaluate(
                 "spider_test_suite",
                 {"database_path": str(root / "suite1.sqlite"),
+                 "dataset": "spider", "split": "dev",
                  "gold_sql": "select x from t where x > 0",
                  "predicted_sql": "select x from t where x >= 1"},
                 enabled=True,
@@ -482,10 +499,20 @@ class EvaluationProtocolV2Tests(unittest.TestCase):
             incomplete = registry.evaluate(
                 "spider_test_suite",
                 {"database_path": str(root / "suite1.sqlite"),
+                 "dataset": "spider", "split": "dev",
                  "gold_sql": "select x from t", "predicted_sql": "select x from t"},
                 enabled=True, available_resources={"suite1.sqlite": str(root / "suite1.sqlite")},
             )
             self.assertEqual(incomplete.reason, "resource_missing:suite2.sqlite")
+            wrong_dataset = registry.evaluate(
+                "spider_test_suite",
+                {"database_path": str(root / "suite1.sqlite"),
+                 "dataset": "bird", "split": "dev",
+                 "gold_sql": "select x from t", "predicted_sql": "select x from t"},
+                enabled=True,
+                available_resources={path.name: str(path) for path in root.glob("*.sqlite")},
+            )
+            self.assertEqual(wrong_dataset.reason, "dataset_mismatch")
 
     def test_l6_store_requires_explicit_compatible_runs(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -580,6 +607,78 @@ class EvaluationProtocolV2Tests(unittest.TestCase):
             self.assertIn("reused", reused.execution_id)
             self.assertNotIn("reused", measured.execution_id)
 
+    def test_execution_cache_excludes_failures_and_nondeterministic_sql(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "db.sqlite"
+            with sqlite3.connect(db) as conn:
+                conn.execute("create table t(x)")
+            executor = SQLExecutor()
+            first = executor.execute_sqlite(
+                str(db), "select missing from t", run_id="r", instance_id="s",
+                candidate_id="c1", database_snapshot="snap",
+            )
+            second = executor.execute_sqlite(
+                str(db), "select missing from t", run_id="r", instance_id="s",
+                candidate_id="c2", database_snapshot="snap",
+            )
+            self.assertEqual(first.status, "execution_error")
+            self.assertIsNone(second.reused_from_execution_id)
+            self.assertIsNone(SQLExecutor.reuse_key(
+                "select randomblob(4)", "snap", "sqlite", "local", "default"))
+            self.assertIsNone(SQLExecutor.reuse_key(
+                "select date('now')", "snap", "sqlite", "local", "default"))
+            self.assertIsNone(SQLExecutor.reuse_key(
+                "select strftime('%s', 'now')", "snap", "sqlite", "local", "default"))
+
+    def test_checkpoint_hashes_database_without_reading_it_whole(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "db.sqlite"
+            with sqlite3.connect(db) as conn:
+                conn.execute("create table t(x)")
+            checkpoint = root / "checkpoint.json"
+            checkpoint.write_text(json.dumps({
+                "run_id": "r", "dataset": "d", "split": "s", "method": "m",
+                "samples": [{"instance_id": "i", "db_path": str(db),
+                             "gold_sql": "select x from t",
+                             "candidates": [{"candidate_id": "c", "sql": "select x from t"}],
+                             "selected_candidate_id": "c"}],
+            }), encoding="utf-8")
+            with patch.object(Path, "read_bytes", side_effect=AssertionError("whole-file read")):
+                bundle = evaluate_checkpoint(checkpoint, {})
+            self.assertNotEqual(bundle.database_snapshot, "unknown")
+
+    def test_database_snapshot_binds_database_content_to_sample_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            databases = []
+            for value in (1, 2):
+                db = root / f"db-{value}.sqlite"
+                with sqlite3.connect(db) as conn:
+                    conn.execute("create table t(x)")
+                    conn.execute("insert into t values (?)", (value,))
+                databases.append(db)
+
+            def bundle_for(run_id, paths):
+                checkpoint = root / f"{run_id}.json"
+                checkpoint.write_text(json.dumps({
+                    "run_id": run_id, "dataset": "d", "split": "s", "method": "m",
+                    "database_snapshot": "declared",
+                    "samples": [
+                        {"instance_id": instance_id, "db_path": str(db),
+                         "gold_sql": "select x from t",
+                         "candidates": [{"candidate_id": f"c-{instance_id}",
+                                         "sql": "select x from t"}],
+                         "selected_candidate_id": f"c-{instance_id}"}
+                        for instance_id, db in zip(("a", "b"), paths)
+                    ],
+                }), encoding="utf-8")
+                return evaluate_checkpoint(checkpoint, {})
+
+            original = bundle_for("original", databases)
+            swapped = bundle_for("swapped", list(reversed(databases)))
+            self.assertNotEqual(original.database_snapshot, swapped.database_snapshot)
+
     def test_cohort_comparison_rejects_snapshot_mismatch(self):
         a = CohortDescriptor(dataset="d", split="s", database_snapshot="one", sample_ids=["1"],
                              candidate_protocol="first", evaluator_protocol="p@1", model_config="m")
@@ -623,6 +722,33 @@ class EvaluationProtocolV2Tests(unittest.TestCase):
                 run_id="r", dataset="d", split="s", method="m", samples=[],
                 aggregate={"wrong-key": metric},
             )
+
+    def test_minimal_bundle_supports_categorical_metrics(self):
+        candidate = Candidate(candidate_id="c1", occurrence_id="o1", sql="select 1", ordinal=0)
+        metric = MetricResult(
+            metric_id="labels", protocol_id="project.labels", protocol_version="2",
+            status="available", categorical_counts={"success": 1}, coverage=1,
+        )
+        bundle = EvaluationBundleV2.minimal(
+            "r", "d", "s", "m", "i", [candidate], {"labels": metric},
+        )
+        self.assertEqual(bundle.aggregate["labels"].categorical_counts, {"success": 1})
+
+    def test_l4_distribution_is_unavailable_without_a_selected_candidate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "db.sqlite"
+            with sqlite3.connect(db) as conn:
+                conn.execute("create table t(x)")
+            checkpoint = root / "checkpoint.json"
+            checkpoint.write_text(json.dumps({
+                "run_id": "r", "dataset": "d", "split": "s", "method": "m",
+                "samples": [{"instance_id": "i", "db_path": str(db),
+                             "gold_sql": "select x from t", "candidates": []}],
+            }), encoding="utf-8")
+            bundle = evaluate_checkpoint(checkpoint, {})
+            self.assertEqual(bundle.aggregate["stage_attribution"].status, "unavailable")
+            self.assertEqual(bundle.aggregate["stage_attribution"].coverage, 0)
 
 
 if __name__ == "__main__":

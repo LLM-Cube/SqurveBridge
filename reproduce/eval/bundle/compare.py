@@ -10,7 +10,18 @@ from typing import Any, Dict, Optional
 
 
 def compare_scores(previous: dict, current: dict) -> dict:
-    if previous.get("schema_version") == 2 or current.get("schema_version") == 2:
+    from reproduce.eval.bundle.schema import bundle_version
+
+    previous_version = bundle_version(previous)
+    current_version = bundle_version(current)
+    if previous_version != current_version:
+        return {
+            "runs": {"previous": previous.get("run_id"), "current": current.get("run_id")},
+            "status": "incompatible_bundle_schema",
+            "schema_versions": {"previous": previous_version, "current": current_version},
+            "metrics": {}, "regressions": {}, "improvements": {},
+        }
+    if previous_version == 2:
         return _compare_v2(previous, current)
     return {
         "runs": {

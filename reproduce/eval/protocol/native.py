@@ -52,6 +52,18 @@ class NativeEvaluatorRegistry:
             if _sha256_file(resource_path) != checksum:
                 return _unavailable(adapter_id, f"resource_checksum_mismatch:{name}", provenance, spec.upstream_revision)
             verified_paths[name] = resource_path.resolve()
+        dataset = payload.get("dataset")
+        split = payload.get("split")
+        if dataset is None:
+            return _unavailable(adapter_id, "applicability_unavailable:dataset", provenance,
+                                spec.upstream_revision)
+        if str(dataset).lower() != spec.dataset.lower():
+            return _unavailable(adapter_id, "dataset_mismatch", provenance, spec.upstream_revision)
+        if split is None:
+            return _unavailable(adapter_id, "applicability_unavailable:split", provenance,
+                                spec.upstream_revision)
+        if str(split).lower() != spec.split.lower():
+            return _unavailable(adapter_id, "split_mismatch", provenance, spec.upstream_revision)
         if spec.test_suite:
             database_path = Path(str(payload.get("database_path", ""))).resolve()
             if database_path not in verified_paths.values():
