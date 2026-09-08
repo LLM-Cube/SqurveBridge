@@ -49,8 +49,23 @@ class _Profile:
 class CapabilityProfile(_Profile):
     kind = "capability"
 
-    def __init__(self, version: str, actor_category: str, fields: Mapping[str, str]):
-        super().__init__(version, actor_category=actor_category, fields=dict(fields))
+    def __init__(self, version: str, actor_category: str, fields: Mapping[str, Any]):
+        normalized: dict[str, Any] = {}
+        for name, requirement in fields.items():
+            if requirement == "conditional":
+                requirement = {
+                    "requirement": "conditional",
+                    "condition": f"{name}_applicable",
+                }
+            level = requirement.get("requirement") if isinstance(requirement, Mapping) else requirement
+            if level not in {"required", "conditional", "optional", "opt_in"}:
+                raise ValueError("invalid_capability_requirement")
+            if level == "conditional" and (
+                not isinstance(requirement, Mapping) or not isinstance(requirement.get("condition"), str)
+            ):
+                raise ValueError("conditional_requirement_missing_condition")
+            normalized[name] = requirement
+        super().__init__(version, actor_category=actor_category, fields=normalized)
 
 
 class CollectionConfig(_Profile):
@@ -72,15 +87,28 @@ class AcceptanceProfile(_Profile):
 DEFAULT_CAPABILITY_PROFILES = [
     CapabilityProfile(f"{category}-v1", category, fields)
     for category, fields in {
-        "reducer": {"input_schema_ref": "conditional", "output_schema_ref": "conditional"},
-        "parser": {"input_question_ref": "conditional", "linking_output_ref": "conditional"},
-        "decomposer": {"decomposition_output_ref": "conditional", "plan_to_task_edges": "conditional"},
-        "generator": {"candidate_id": "conditional", "sql_ref": "conditional"},
-        "scaler": {"input_candidate_ids": "conditional", "produced_candidate_ids": "conditional"},
-        "optimizer": {"optimization_attempt_id": "required", "output_candidate_ids": "conditional"},
-        "selector": {"ordered_candidate_pool_ref": "conditional", "selected_candidate_id": "conditional"},
-        "agent": {"chosen_action": "conditional", "child_task_refs": "conditional"},
-        "nest": {"child_operation_refs": "conditional", "branch_events": "conditional"},
+        "reducer": {"actor_class": "required", "output_ref": {
+            "requirement": "conditional", "condition": "structured_output_produced"}},
+        "parser": {"actor_class": "required", "output_ref": {
+            "requirement": "conditional", "condition": "structured_output_produced"}},
+        "decomposer": {"actor_class": "required", "decomposition_output_ref": {
+            "requirement": "conditional", "condition": "decomposition_output_produced"}},
+        "generator": {"actor_class": "required", "candidate_ids": {
+            "requirement": "conditional", "condition": "output_candidates_produced"}},
+        "scaler": {"actor_class": "required", "input_candidate_ids": {
+            "requirement": "conditional", "condition": "input_candidates_observed"},
+            "produced_candidate_ids": {
+                "requirement": "conditional", "condition": "output_candidates_produced"}},
+        "optimizer": {"actor_class": "required", "optimization_attempt_id": "required",
+            "output_candidate_ids": {
+                "requirement": "conditional", "condition": "multi_candidate_optimization"}},
+        "selector": {"actor_class": "required", "ordered_candidate_pool": "required",
+            "selected_candidate_id": {
+                "requirement": "conditional", "condition": "selection_unambiguous"}},
+        "agent": {"actor_class": "required", "output_ref": {
+            "requirement": "conditional", "condition": "output_retained"}},
+        "nest": {"actor_class": "required", "output_ref": {
+            "requirement": "conditional", "condition": "output_retained"}},
     }.items()
 ]
 
@@ -183,7 +211,18 @@ class EvidenceRun:
         self.checkpoint_ref = checkpoint_ref
         self._candidates_by_sql: dict[str, list[dict[str, Any]]] = {}
         self._candidate_pools: dict[int, tuple[Any, list[dict[str, Any]]]] = {}
+        self._actor_candidate_inputs: dict[str, tuple[Any, list[str]]] = {}
+        self._actor_profiles: dict[str, CapabilityProfile] = {}
+        self._actor_observed_fields: dict[str, set[str]] = {}
+        self._actor_conditions: dict[str, dict[str, str]] = {}
         required = set(self.collection_config.values["required_fields"])
+        required.update(
+            name
+            for profile in self.capability_profiles
+            for name, requirement in profile.values.get("fields", {}).items()
+            if requirement == "required"
+            or (isinstance(requirement, Mapping) and requirement.get("requirement") == "required")
+        )
         enabled_value = self.collection_config.values["enabled_fields"]
         enabled = set(enabled_value or [])
         if enabled_value is not None and not required.issubset(enabled):
@@ -304,6 +343,16 @@ class EvidenceRun:
             with self._lock:
                 self._count += 1
                 self._observed_fields.update(key for key, value in facts.items() if value is not None)
+                explicit_span = facts.get("span_id")
+                active_span = (
+                    explicit_span
+                    if isinstance(explicit_span, str) and explicit_span in self._actor_observed_fields
+                    else _span.get()
+                )
+                if active_span in self._actor_observed_fields:
+                    self._actor_observed_fields[active_span].update(
+                        key for key, value in facts.items() if value is not None
+                    )
             return event_id
         return None
 
@@ -351,6 +400,9 @@ class EvidenceRun:
     def condition(self, name: str, value: str, *, basis_refs: list[str] | None = None) -> str | None:
         if value not in {ConditionValue.TRUE, ConditionValue.FALSE, ConditionValue.UNKNOWN}:
             raise ValueError("invalid_condition_value")
+        span_id = current_span_id()
+        if span_id in self._actor_conditions:
+            self._actor_conditions[span_id][name] = value
         if value == ConditionValue.UNKNOWN:
             self._issue("condition_unknown")
         return self.event("condition.evaluated", condition=name, value=value, basis_refs=basis_refs or [])
@@ -367,9 +419,6 @@ class EvidenceRun:
         return candidate
 
     def candidate_for_input(self, sql_text: str) -> dict[str, Any]:
-        known = self._candidates_by_sql.get(sql_text)
-        if known:
-            return known[-1]
         candidate = self.candidate(sql_text)
         self.event("candidate.provenance", candidate_occurrence_id=candidate["candidate_occurrence_id"],
                    producer_attribution="unattributed")
@@ -379,14 +428,10 @@ class EvidenceRun:
         known_pool = self._candidate_pools.get(id(pool_object)) if pool_object is not None else None
         if known_pool is not None and known_pool[0] is pool_object:
             return list(known_pool[1])
-        used: dict[str, int] = {}
-        pool: list[dict[str, Any]] = []
-        for sql in sql_values:
-            offset = used.get(sql, 0)
-            known = self._candidates_by_sql.get(sql, [])
-            candidate = known[offset] if offset < len(known) else self.candidate_for_input(sql)
-            used[sql] = offset + 1
-            pool.append(candidate)
+        # SQL content equality cannot establish occurrence identity. If the
+        # exact in-memory pool is unavailable, retain the observed inputs as
+        # new, explicitly unattributed occurrences instead of guessing lineage.
+        pool = [self.candidate_for_input(sql) for sql in sql_values]
         if pool_object is not None:
             self._candidate_pools[id(pool_object)] = (pool_object, list(pool))
         return pool
@@ -477,10 +522,63 @@ class EvidenceRun:
     def reexport_event(self, record: Mapping[str, Any]) -> bool:
         event_id = record.get("event_id")
         segment_id = record.get("execution_segment_id")
-        if not isinstance(event_id, str) or not isinstance(segment_id, str):
+        if not self._safe_path_identity(event_id) or not self._safe_path_identity(segment_id):
             self._issue("reexport_identity_missing")
             return False
         return self._enqueue(f"segments/{segment_id}/events/{event_id}.json", dict(record))
+
+    @staticmethod
+    def _safe_path_identity(value: Any) -> bool:
+        return (
+            isinstance(value, str)
+            and value not in {"", ".", ".."}
+            and "/" not in value
+            and "\\" not in value
+            and "\x00" not in value
+        )
+
+    def begin_actor(self, span_id: str, profile: CapabilityProfile | None) -> None:
+        self._actor_observed_fields[span_id] = set()
+        self._actor_conditions[span_id] = {}
+        if profile is not None:
+            self._actor_profiles[span_id] = profile
+
+    def observe_actor_candidate_inputs(self, values: Any) -> None:
+        span_id = current_span_id()
+        if span_id is None:
+            return
+        self._actor_candidate_inputs[span_id] = (values, _sql_values(values))
+
+    def finish_actor(self, span_id: str) -> None:
+        profile = self._actor_profiles.pop(span_id, None)
+        observed = self._actor_observed_fields.pop(span_id, set())
+        conditions = self._actor_conditions.pop(span_id, {})
+        self._actor_candidate_inputs.pop(span_id, None)
+        if profile is None:
+            return
+        required = {
+            name for name, requirement in profile.values.get("fields", {}).items()
+            if requirement == "required"
+            or (isinstance(requirement, Mapping) and requirement.get("requirement") == "required")
+        }
+        missing = required - observed
+        for name, requirement in profile.values.get("fields", {}).items():
+            if not isinstance(requirement, Mapping) or requirement.get("requirement") != "conditional":
+                continue
+            condition_name = requirement.get("condition")
+            condition_value = conditions.get(condition_name) if isinstance(condition_name, str) else None
+            if condition_value == ConditionValue.TRUE and name not in observed:
+                missing.add(name)
+            elif condition_value is None:
+                self._issue("conditional_condition_unobserved")
+        if missing:
+            self._issue("required_evidence_missing")
+            self.event(
+                "actor.evidence_incomplete",
+                span_id=span_id,
+                capability_profile_ref=profile.version,
+                missing_required_fields=sorted(missing),
+            )
 
     def evaluate(self, evidence: Mapping[str, Any], *, required_metrics: set[str] | None = None) -> dict[str, Any]:
         if self.acceptance_profile is None:
@@ -556,29 +654,39 @@ def current_span_id() -> str | None:
     return _span.get()
 
 
-def submit_with_evidence(executor: Any, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-    """Record and propagate an explicitly created Squrve runtime task."""
+def submit_with_evidence(
+    executor: Any,
+    fn: Callable[..., Any],
+    *args: Any,
+    evidence_task: bool = False,
+    **kwargs: Any,
+) -> Any:
+    """Propagate evidence context and optionally record an actual runtime task."""
     run = current_run()
     if run is None:
         return executor.submit(fn, *args, **kwargs)
     context = contextvars.copy_context()
     scheduling_span_id = current_span_id()
-    task_id = run.task_created()
-    run.workflow_event("scheduled", task_id=task_id, scheduled_by_span_id=scheduling_span_id)
+    task_id = run.task_created() if evidence_task else None
+    if task_id is not None:
+        run.workflow_event("scheduled", task_id=task_id, scheduled_by_span_id=scheduling_span_id)
 
     def invoke() -> Any:
-        run.workflow_event("started", task_id=task_id)
+        if task_id is not None:
+            run.workflow_event("started", task_id=task_id)
         try:
             result = fn(*args, **kwargs)
         except BaseException as exc:
-            run.workflow_event(
-                "finished",
-                task_id=task_id,
-                execution_status="failed",
-                error_type=type(exc).__name__,
-            )
+            if task_id is not None:
+                run.workflow_event(
+                    "finished",
+                    task_id=task_id,
+                    execution_status="failed",
+                    error_type=type(exc).__name__,
+                )
             raise
-        run.workflow_event("finished", task_id=task_id, execution_status="success")
+        if task_id is not None:
+            run.workflow_event("finished", task_id=task_id, execution_status="success")
         return result
 
     return executor.submit(context.run, invoke)
@@ -606,54 +714,68 @@ def _record_actor_specific(run: EvidenceRun, fn: Callable[..., Any], actor: Any,
     input_manifest.update(dataset_manifest)
     run.event("actor.input_manifest", actor_category=category, fields=input_manifest)
 
-    sql_inputs = _sql_values(inputs.get("pred_sql")) or dataset_sql_inputs
+    observed_pool = run._actor_candidate_inputs.get(span_id)
+    sql_inputs = observed_pool[1] if observed_pool is not None else (
+        _sql_values(inputs.get("pred_sql")) or dataset_sql_inputs
+    )
+    pool_object = observed_pool[0] if observed_pool is not None else inputs.get("pred_sql")
     sql_outputs = _sql_values(result)
     if isinstance(result, Mapping):
         sql_outputs = _sql_values(result.get("pred_sql") or result.get("sql") or result.get("SQL")
                                   or result.get("query"))
 
     if category == "generator":
+        run.condition("output_candidates_produced", ConditionValue.TRUE if sql_outputs else ConditionValue.FALSE)
         candidates = [run.candidate(sql, producer_span_id=span_id) for sql in sql_outputs]
         if isinstance(result, (list, tuple)):
             run._candidate_pools[id(result)] = (result, list(candidates))
         run.event("generator.output", candidate_ids=[c["candidate_occurrence_id"] for c in candidates],
                   output_ref=output_ref)
     elif category == "scaler":
-        input_candidates = run.candidates_for_pool(sql_inputs, inputs.get("pred_sql"))
+        run.condition("input_candidates_observed", ConditionValue.TRUE if sql_inputs else ConditionValue.FALSE)
+        run.condition("output_candidates_produced", ConditionValue.TRUE if sql_outputs else ConditionValue.FALSE)
+        input_candidates = run.candidates_for_pool(sql_inputs, pool_object)
         produced = [run.candidate(sql, producer_span_id=span_id,
                                   parent_candidate_id=input_candidates[0]["candidate_occurrence_id"]
                                   if len(input_candidates) == 1 else None) for sql in sql_outputs]
         run.event("scaler.output", input_candidate_ids=[c["candidate_occurrence_id"] for c in input_candidates],
                   produced_candidate_ids=[c["candidate_occurrence_id"] for c in produced])
     elif category == "optimizer":
-        input_candidates = run.candidates_for_pool(sql_inputs, inputs.get("pred_sql"))
+        input_candidates = run.candidates_for_pool(sql_inputs, pool_object)
         attempts = []
         if len(input_candidates) == 1 and len(sql_outputs) == 1:
+            run.condition("multi_candidate_optimization", ConditionValue.FALSE)
             attempts.append(run.optimization_attempt(input_candidates[0], sql_outputs[0]))
         else:
+            run.condition("multi_candidate_optimization", ConditionValue.TRUE)
             produced = [run.candidate(sql, producer_span_id=span_id) for sql in sql_outputs]
-            run.event("optimizer.output", input_candidate_ids=[c["candidate_occurrence_id"] for c in input_candidates],
+            run.event("optimizer.output", optimization_attempt_id=identity(),
+                      input_candidate_ids=[c["candidate_occurrence_id"] for c in input_candidates],
                       output_candidate_ids=[c["candidate_occurrence_id"] for c in produced],
                       parentage="unknown" if len(input_candidates) > 1 else "explicit")
         if attempts:
             run.event("optimizer.output", attempts=attempts)
     elif category == "selector":
-        pool = run.candidates_for_pool(sql_inputs, inputs.get("pred_sql"))
+        pool = run.candidates_for_pool(sql_inputs, pool_object)
         selected_indices = [index for index, sql in enumerate(sql_inputs) if sql in sql_outputs]
         selected = pool[selected_indices[0]] if len(selected_indices) == 1 else None
+        run.condition("selection_unambiguous", ConditionValue.TRUE if selected else ConditionValue.FALSE)
         run.event("selector.decision", ordered_candidate_pool=[c["candidate_occurrence_id"] for c in pool],
                   selected_candidate_id=selected["candidate_occurrence_id"] if selected else None,
                   selection_identity="explicit" if selected else "ambiguous",
                   consumption="unknown")
     elif category in {"parser", "reducer"}:
+        run.condition("structured_output_produced", ConditionValue.TRUE if result is not None else ConditionValue.FALSE)
         structured_ref = output_ref or (run.artifact(result) if result is not None else None)
         run.event(f"{category}.structured_output", output_ref=structured_ref,
                   output_availability=Availability.PRESENT if result is not None else Availability.NOT_PROVIDED)
     elif category == "decomposer":
+        run.condition("decomposition_output_produced", ConditionValue.TRUE if result is not None else ConditionValue.FALSE)
         plan_ref = output_ref or (run.artifact(result) if result is not None else None)
         run.event("decomposer.output", decomposition_output_ref=plan_ref,
                   runtime_tasks_created=False)
     elif category in {"agent", "nest"}:
+        run.condition("output_retained", ConditionValue.TRUE if output_ref else ConditionValue.FALSE)
         run.event(f"{category}.decision", output_ref=output_ref,
                   information_consumption="unknown")
 
@@ -671,9 +793,11 @@ def instrument_actor(fn: Callable[..., Any]) -> Callable[..., Any]:
         actor_category = type(self).__module__.split(".")[-2] if "." in type(self).__module__ else "unknown"
         matching_profiles = [p for p in run.capability_profiles
                              if p.values.get("actor_category") == actor_category]
+        profile = matching_profiles[0] if matching_profiles else None
+        run.begin_actor(span_id, profile)
         run.event("actor.started", span_id=span_id, actor_class=type(self).__name__,
                   actor_category=actor_category,
-                  capability_profile_ref=(matching_profiles[0].version if matching_profiles else None),
+                  capability_profile_ref=(profile.version if profile else None),
                   sample_ref=sample_ref)
         token = _span.set(span_id)
         actor_token = _actor.set(id(self))
@@ -707,6 +831,7 @@ def instrument_actor(fn: Callable[..., Any]) -> Callable[..., Any]:
                       duration_ns=duration, output_ref=output_ref)
             return result
         finally:
+            run.finish_actor(span_id)
             _actor.reset(actor_token)
             _span.reset(token)
     return traced
@@ -777,9 +902,20 @@ def read_evidence(directory: str | Path) -> dict[str, Any]:
              if (key := lifecycle_key(event)) is not None}
     if started - ended:
         issues.append("unobserved_completion")
+    artifact_reference_fields = {
+        "output_ref",
+        "result_ref",
+        "decomposition_output_ref",
+        "original_record_ref",
+    }
     for event in events:
-        if event.get("output_ref") and event["output_ref"] not in artifacts:
-            issues.append("output_artifact_unavailable")
+        for field in artifact_reference_fields:
+            if field == "output_ref" and event.get("type") == "merge.observed":
+                # Merge output_ref is a bounded content identity, not a retained artifact.
+                continue
+            reference = event.get(field)
+            if reference and reference not in artifacts:
+                issues.append(f"{field}_artifact_unavailable")
     status = "invalid" if invalid else "unavailable" if not segments else "partial" if issues else "complete"
     coverage_status = "unknown"
     execution_status = "unknown"

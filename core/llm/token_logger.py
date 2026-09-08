@@ -231,12 +231,19 @@ class TokenLogger:
             if run is not None:
                 logical_call_id = _logical_call_id.get()
                 attempt_id = _attempt_id.get()
+                evidence_total_tokens = reported_total_tokens
+                if (
+                    evidence_total_tokens is None
+                    and reported_prompt_tokens is not None
+                    and reported_completion_tokens is not None
+                ):
+                    evidence_total_tokens = reported_prompt_tokens + reported_completion_tokens
                 reported_usage = {
                     key: value
                     for key, value in {
                         "prompt_tokens": reported_prompt_tokens,
                         "completion_tokens": reported_completion_tokens,
-                        "total_tokens": total_tokens,
+                        "total_tokens": evidence_total_tokens,
                     }.items()
                     if value is not None
                 }

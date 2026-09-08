@@ -72,6 +72,14 @@ class BaseOptimizer(Actor):
         except Exception as e:
             logger.info(f"Error when loading pred_sql: {e}. Treat sql_list storing the generated sqls.")
 
+        try:
+            from core.evidence import current_run
+            run = current_run()
+            if run is not None:
+                run.observe_actor_candidate_inputs(sql_list)
+        except Exception:
+            pass
+
         return sql_list, is_single
 
     def save_output(self, optimized_sqls: List[str], item: int, instance_id: str = None) -> Union[str, List[str]]:

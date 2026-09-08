@@ -33,7 +33,7 @@ class ParallelTask(MultiTask):
         max_workers = min(len(self.tasks), 8)
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [submit_with_evidence(executor, _run_task, task) for task in self.tasks]
+            futures = [submit_with_evidence(executor, _run_task, task, evidence_task=True) for task in self.tasks]
             for future in as_completed(futures):
                 try:
                     future.result()

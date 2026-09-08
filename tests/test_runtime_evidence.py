@@ -139,6 +139,24 @@ class RuntimeEvidenceTests(unittest.TestCase):
             self.assertEqual(finished["preservation_completeness"], "complete")
             self.assertIn(finished["result_ref"], evidence["artifacts"])
 
+        with tempfile.TemporaryDirectory() as directory:
+            with EvidenceRun(directory, run_id="db-empty"):
+                with patch("core.db_connect.get_sql_exec_result", return_value=(pd.DataFrame(columns=["x"]), None)):
+                    execute_sql("sqlite", "/tmp/db.sqlite", "SELECT 1", None)
+            evidence = read_evidence(directory)
+            finished = next(e for e in evidence["events"] if e["type"] == "db.finished")
+            self.assertEqual(finished["preservation_completeness"], "disabled")
+            self.assertEqual(finished["known_total_row_count"], 0)
+
+        with tempfile.TemporaryDirectory() as directory:
+            with EvidenceRun(directory, run_id="db-empty-retained", capture_outputs=True):
+                with patch("core.db_connect.get_sql_exec_result", return_value=(pd.DataFrame(columns=["x"]), None)):
+                    execute_sql("sqlite", "/tmp/db.sqlite", "SELECT 1", None)
+            evidence = read_evidence(directory)
+            finished = next(e for e in evidence["events"] if e["type"] == "db.finished")
+            self.assertEqual(finished["preservation_completeness"], "complete")
+            self.assertEqual(evidence["artifacts"][finished["result_ref"]]["columns"], ["x"])
+
     def test_llm_entry_point_links_usage_to_observable_attempt(self):
         from core.llm.token_logger import TokenLogger, observe_llm_call, observe_llm_stream_call
 
@@ -212,6 +230,39 @@ class RuntimeEvidenceTests(unittest.TestCase):
                           if e["type"] == "usage.reported" and e["usage"] == {"total_tokens": 0})
         self.assertEqual(zero_usage["scope"], "provider_observation")
 
+        with tempfile.TemporaryDirectory() as directory:
+            logger = TokenLogger()
+            with EvidenceRun(directory, run_id="partial-usage"):
+                logger.record({"prompt_tokens": 5}, model="partial-provider")
+            evidence = read_evidence(directory)
+        partial = next(e for e in evidence["events"] if e["type"] == "usage.reported")
+        self.assertEqual(partial["usage"], {"prompt_tokens": 5})
+
+    def test_selector_uses_sql_loaded_by_actor_instead_of_persisted_path(self):
+        from core.actor.selector.BaseSelect import BaseSelector
+        from core.data_manage import Dataset
+
+        class PersistedSelector(BaseSelector):
+            NAME = "persisted-selector"
+
+            def act(self, item, pred_sql=None, **kwargs):
+                return self.load_pred_sql(pred_sql, item)[0]
+
+        PersistedSelector.__module__ = "core.actor.selector.test"
+
+        with tempfile.TemporaryDirectory() as directory:
+            sql_path = Path(directory) / "candidate.sql"
+            sql_path.write_text("SELECT 1")
+            dataset = Dataset([{"pred_sql": str(sql_path)}], "/tmp/schema.json")
+            selector = PersistedSelector(dataset=dataset, is_save=False)
+            with EvidenceRun(Path(directory) / "evidence", run_id="persisted-sql"):
+                self.assertEqual(selector.act(0), "SELECT 1")
+            evidence = read_evidence(Path(directory) / "evidence")
+        candidates = [e for e in evidence["events"] if e["type"] == "candidate.created"]
+        self.assertEqual([e["sql_text"] for e in candidates], ["SELECT 1"])
+        decision = next(e for e in evidence["events"] if e["type"] == "selector.decision")
+        self.assertEqual(decision["selection_identity"], "explicit")
+
     def test_dataset_mutation_is_attributed_to_active_actor_span(self):
         from core.data_manage import Dataset
 
@@ -244,6 +295,7 @@ class RuntimeEvidenceTests(unittest.TestCase):
             merge = next(e for e in evidence["events"] if e["type"] == "merge.observed")
             self.assertEqual(merge["lineage_status"], "explicit")
             self.assertEqual(len(merge["input_refs"]), 2)
+            self.assertEqual(evidence["evidence_status"], "complete")
 
     def test_actor_adapters_preserve_candidate_pool_and_selection(self):
         class GeneratorActor(Actor):
@@ -447,7 +499,7 @@ class RuntimeEvidenceTests(unittest.TestCase):
             evidence = read_evidence(directory)
             self.assertIn("run_size_limit", evidence["issues"])
 
-    def test_concurrent_operations_keep_parent_relationships(self):
+    def test_concurrent_operations_keep_parent_relationships_without_inventing_tasks(self):
         with tempfile.TemporaryDirectory() as directory:
             with EvidenceRun(directory, run_id="tree-run"):
                 run = __import__("core.evidence", fromlist=["current_run"]).current_run()
@@ -461,11 +513,20 @@ class RuntimeEvidenceTests(unittest.TestCase):
             parent = starts[0]
             children = [e for e in evidence["events"] if e["type"] == "child.started"]
             self.assertEqual([e["parent_span_id"] for e in children], [parent["span_id"]] * 2)
-            task_ids = [e["task_id"] for e in evidence["events"] if e["type"] == "task.created"]
-            scheduled = [e for e in evidence["events"] if e["type"] == "workflow.scheduled"]
-            self.assertEqual(len(task_ids), 2)
-            self.assertEqual({e["task_id"] for e in scheduled}, set(task_ids))
-            self.assertEqual([e["scheduled_by_span_id"] for e in scheduled], [parent["span_id"]] * 2)
+            self.assertFalse(any(e["type"] == "task.created" for e in evidence["events"]))
+
+    def test_explicit_runtime_tasks_receive_task_identities(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with EvidenceRun(directory, run_id="tasks") as run:
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    submit_with_evidence(
+                        executor, self._child_operation, run, evidence_task=True,
+                    ).result()
+            evidence = read_evidence(directory)
+        task_ids = [e["task_id"] for e in evidence["events"] if e["type"] == "task.created"]
+        self.assertEqual(len(task_ids), 1)
+        scheduled = next(e for e in evidence["events"] if e["type"] == "workflow.scheduled")
+        self.assertEqual(scheduled["task_id"], task_ids[0])
 
     def test_plain_thread_pool_work_is_not_claimed_as_squrve_task(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -489,6 +550,98 @@ class RuntimeEvidenceTests(unittest.TestCase):
             evidence = read_evidence(directory)
         self.assertEqual(evidence["evidence_status"], "invalid")
         self.assertIn("invalid_segment", evidence["issues"])
+
+    def test_reexport_rejects_path_traversal_identity(self):
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root) / "run"
+            with EvidenceRun(directory, run_id="reexport") as run:
+                accepted = run.reexport_event({
+                    "event_id": "foreign",
+                    "execution_segment_id": "../../escaped",
+                })
+            self.assertFalse(accepted)
+            self.assertFalse((Path(root) / "escaped").exists())
+
+    def test_missing_database_result_artifact_makes_evidence_partial(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with EvidenceRun(directory, run_id="missing-result") as run:
+                result_ref = run.artifact({"columns": ["x"], "data": [[1]]})
+                run.event(
+                    "db.finished",
+                    operation_id="op",
+                    execution_status="success",
+                    fetch_completeness="complete",
+                    preservation_completeness="complete",
+                    result_ref=result_ref,
+                )
+            (Path(directory) / "artifacts" / f"{result_ref}.json").unlink()
+            evidence = read_evidence(directory)
+        self.assertEqual(evidence["evidence_status"], "partial")
+        self.assertIn("result_ref_artifact_unavailable", evidence["issues"])
+
+    def test_capability_requirements_are_checked_per_actor_occurrence(self):
+        class IncompleteOptimizer(Actor):
+            def act(self, item, **kwargs):
+                return None
+
+        IncompleteOptimizer.__module__ = "core.actor.optimizer.test"
+        profile = CapabilityProfile(
+            "optimizer-required-v1", "optimizer", {"missing_fact": "required"},
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            with EvidenceRun(directory, run_id="capability", capability_profiles=[profile]):
+                IncompleteOptimizer().act(0)
+            evidence = read_evidence(directory)
+        self.assertEqual(evidence["evidence_status"], "partial")
+        incomplete = next(e for e in evidence["events"] if e["type"] == "actor.evidence_incomplete")
+        self.assertEqual(incomplete["missing_required_fields"], ["missing_fact"])
+
+    def test_nested_actor_requirements_are_attributed_to_the_child_span(self):
+        class ChildGenerator(Actor):
+            def act(self, item, **kwargs):
+                return ["SELECT 1"]
+
+        class ParentAgent(Actor):
+            def act(self, item, **kwargs):
+                return ChildGenerator().act(item)
+
+        ChildGenerator.__module__ = "core.actor.generator.test"
+        ParentAgent.__module__ = "core.actor.agent.test"
+        with tempfile.TemporaryDirectory() as directory:
+            with EvidenceRun(directory, run_id="nested-requirements"):
+                ParentAgent().act(0)
+            evidence = read_evidence(directory)
+        self.assertEqual(evidence["evidence_status"], "complete")
+        self.assertFalse(any(e["type"] == "actor.evidence_incomplete" for e in evidence["events"]))
+
+    def test_unresolved_conditional_requirement_is_not_complete(self):
+        class ConditionalParser(Actor):
+            def act(self, item, **kwargs):
+                return None
+
+        ConditionalParser.__module__ = "core.actor.parser.test"
+        profile = CapabilityProfile(
+            "parser-conditional-v1", "parser", {"score": "conditional"},
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            with EvidenceRun(directory, run_id="conditional", capability_profiles=[profile]):
+                ConditionalParser().act(0)
+            evidence = read_evidence(directory)
+        self.assertEqual(evidence["evidence_status"], "partial")
+        self.assertIn("conditional_condition_unobserved", evidence["issues"])
+
+    def test_content_equality_does_not_guess_candidate_occurrence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with EvidenceRun(directory, run_id="candidate-input") as run:
+                first = run.candidate("SELECT 1")
+                second = run.candidate("SELECT 1")
+                observed = run.candidates_for_pool(["SELECT 1"])[0]
+            evidence = read_evidence(directory)
+        self.assertNotIn(observed["candidate_occurrence_id"], {
+            first["candidate_occurrence_id"], second["candidate_occurrence_id"],
+        })
+        provenance = [e for e in evidence["events"] if e["type"] == "candidate.provenance"]
+        self.assertEqual(provenance[-1]["producer_attribution"], "unattributed")
 
     @staticmethod
     def _child_operation(run):
