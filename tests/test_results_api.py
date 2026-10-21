@@ -175,6 +175,33 @@ class MatrixTests(ResultsApiTestCase):
         self.assertEqual(alpha["cost"]["latency_s"], 2.0)
         self.assertTrue(payload["alignment"]["minibench"]["aligned"], "same questions in another order still align")
 
+    def test_a_cancelled_experiment_cell_stays_cancelled(self):
+        experiment = self.client.post("/api/experiments", json={
+            "cells": [{"method": "c3sql", "dataset": "spider"}],
+            "sampling": {"limit": 3, "mode": "slice", "seed": 42},
+        }).json
+        self.client.post(f"/api/experiments/{experiment['experiment_id']}/cancel")
+        payload = self.client.get("/api/results/matrix", query_string={
+            "methods": "c3sql", "datasets": "spider", "experiment_id": experiment["experiment_id"],
+        }).json
+        self.assertEqual(self.cell(payload, "c3sql", "spider")["status"], "cancelled")
+
+    def test_runs_without_per_question_rows_are_never_called_aligned(self):
+        for method in ("alpha", "beta"):
+            scores = make_scores(method, "minibench", correct=[1, 0, 1])
+            scores["per_sample"] = []
+            self.archive(scores)
+        payload = self.matrix().json
+        self.assertFalse(payload["alignment"]["minibench"]["aligned"])
+        self.assertIsNone(self.cell(payload, "alpha", "minibench")["sample_hash"])
+
+    def test_demo_runs_from_this_workspace_are_labelled_session(self):
+        bundle = Path(self.workspace.name) / "sessions" / "evaluations" / "job-x" / "score-bundle"
+        bundle.mkdir(parents=True)
+        (bundle / "scores.json").write_text(json.dumps(make_scores("alpha", "minibench", correct=[1, 0, 1])), encoding="utf-8")
+        (bundle.parent / "job.json").write_text(json.dumps({"sample_limit": 3, "sample_mode": "slice", "sample_seed": 42}), encoding="utf-8")
+        self.assertEqual(self.cell(self.matrix().json, "alpha", "minibench")["source"], "session")
+
     def test_bad_parameters_are_rejected(self):
         self.assertEqual(self.matrix(methods="").status_code, 400)
         self.assertEqual(self.matrix(datasets="../etc").status_code, 400)
@@ -234,6 +261,29 @@ class DiffTests(ResultsApiTestCase):
         self.archive(make_scores("gamma", "minibench", correct=[1, 0, 1, 0], ids=["x", "y", "z", "w"], run_id="run-c"))
         response = self.diff(b="run-c")
         self.assertEqual(response.status_code, 409)
+
+    def test_unaligned_runs_report_the_unaligned_code(self):
+        self.archive(make_scores("gamma", "minibench", correct=[1, 0, 1, 0], ids=["x", "y", "z", "w"], run_id="run-d"))
+        self.assertEqual(self.diff(b="run-d").json["code"], "unaligned")
+
+    def test_runs_from_another_benchmark_cannot_be_diffed(self):
+        self.archive(make_scores("beta", "otherbench", correct=[1, 0, 1, 0], run_id="run-o"))
+        response = self.diff(b="run-o")
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.diff(dataset="otherbench").status_code, 409)
+
+    def test_runs_without_per_question_rows_cannot_be_diffed(self):
+        for run_id in ("run-e1", "run-e2"):
+            scores = make_scores("alpha", "minibench", correct=[1, 0], run_id=run_id)
+            scores["per_sample"] = []
+            self.archive(scores)
+        self.assertEqual(self.diff(a="run-e1", b="run-e2").status_code, 409)
+
+    def test_the_public_space_does_not_publish_generated_sql(self):
+        with patch.dict(os.environ, {"SQURVE_DEPLOYMENT_TARGET": "hf-space"}, clear=False):
+            rows = self.diff().json["rows"]
+        self.assertTrue(all(row["a"]["sql"] is None and row["b"]["sql"] is None for row in rows))
+        self.assertTrue(all(row["question"] for row in rows))
 
     def test_unknown_runs_and_bad_parameters_are_rejected(self):
         self.assertEqual(self.diff(b="no-such-run").status_code, 404)

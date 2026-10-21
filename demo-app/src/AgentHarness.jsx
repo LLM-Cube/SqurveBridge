@@ -50,7 +50,7 @@ const LOCAL_SUGGESTIONS = [
 // so the user can edit before sending; nothing is dispatched on click.
 const LOCAL_EMPTY_CARDS = [
   { id: 'inspect', titleKey: 'agent.card.inspect', prompt: 'Inspect the current SqurveBridge integration and point out anything that needs attention.' },
-  { id: 'integrate', titleKey: 'agent.card.integrate', prompt: 'Help me integrate a new Text-to-SQL method from a public GitHub repository.' },
+  { id: 'integrate', titleKey: 'agent.card.integrate', prompt: `${skillPrompt('candidate-reader')} <public GitHub URL of the Text-to-SQL method>` },
   { id: 'reproduce', titleKey: 'agent.card.reproduce', prompt: 'Propose an experiment for the cells I selected in Compose with squrve_propose_action (start_experiment, 20 samples, slice). I will confirm it in the UI.' },
   { id: 'evaluate', titleKey: 'agent.card.evaluate', prompt: 'Read the comparison for the methods and benchmarks on this page with squrve_results, then explain which method does best where, the accuracy vs latency trade-offs, and which cells are missing or unaligned.' },
 ]

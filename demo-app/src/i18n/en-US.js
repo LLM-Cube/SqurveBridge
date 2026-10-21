@@ -401,6 +401,7 @@ export default {
   'results.status.missing': 'No run',
   'results.status.running': 'Running',
   'results.status.failed': 'Failed',
+  'results.status.cancelled': 'Cancelled',
   'results.status.unaligned': 'Unaligned',
   'results.status.not_computable': 'Not computable',
   'evidence.title': 'Compare & History',

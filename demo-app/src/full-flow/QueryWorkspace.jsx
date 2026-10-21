@@ -172,6 +172,8 @@ export default function QueryWorkspace({
   const [selectedDb, setSelectedDb] = useState('')
   const [schemaCache, setSchemaCache] = useState({})
   const [question, setQuestion] = useState('')
+  // Set when a question is replayed from the comparison: run it with that method's workflow.
+  const [replayMethod, setReplayMethod] = useState('')
   const [history, setHistory] = useState(() => loadQuestionHistory())
   const [mode, setMode] = useState('direct')
   const [generator, setGenerator] = useState('')
@@ -273,6 +275,7 @@ export default function QueryWorkspace({
     if (!prefill?.id) return
     if (databases.some(item => item.id === prefill.dbId)) setSelectedDb(prefill.dbId)
     if (prefill.question) setQuestion(prefill.question)
+    setReplayMethod(prefill.method || '')
   }, [prefill?.id])
 
   useEffect(() => {
@@ -352,6 +355,7 @@ export default function QueryWorkspace({
     const payload = { question: normalized, db_id: selectedDb, mode }
     if (mode === 'workflow') payload.actors = requestActors
     else payload.generator = generator
+    if (replayMethod) payload.method = replayMethod
     if (credentialMode === 'local' && sqlAuth?.provider) {
       payload.provider = sqlAuth.provider
       if (sqlAuth.model) payload.model = sqlAuth.model

@@ -185,7 +185,7 @@ export default function FullFlowDemo({
   const replayInQuery = useCallback(({ method, dataset, db_id: dbId, question }) => {
     const names = displayNamesFor(method, dataset)
     if (names) onFocusConnection(names.method, names.database)
-    setQueryPrefill({ id: Date.now(), dbId, question })
+    setQueryPrefill({ id: Date.now(), dbId, question, method })
     navigateToStep('query')
     setMobilePane('dashboard')
   }, [onFocusConnection, navigateToStep])

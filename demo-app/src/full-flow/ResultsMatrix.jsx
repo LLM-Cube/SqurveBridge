@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { resolveFocusedConfig } from './model.js'
+import { SAMPLE_LIMITS, resolveFocusedConfig } from './model.js'
 import { CostScatter, DiffPanel } from './ResultsInsights.jsx'
 import { groupedBars, heatmapRows, metricOptions, seriesSlot } from './resultsModel.js'
 
-const SAMPLE_LIMITS = [3, 10, 20, 50, 100, 200]
 // Recorded evidence shipped with the repository; the public Space opens on it.
 const RECORDED = { limit: 100, mode: 'random', seed: 42 }
 

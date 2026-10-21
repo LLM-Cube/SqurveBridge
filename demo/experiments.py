@@ -63,14 +63,14 @@ def _experiment_status(experiment: Experiment) -> str:
     statuses = [cell.status for cell in experiment.cells]
     if any(status in ACTIVE_JOB_STATUSES for status in statuses):
         return "running"
-    if "queued" in statuses:
-        return "queued" if not experiment.cancelled else "cancelled"
-    if experiment.cancelled:
-        return "cancelled"
+    if "queued" in statuses and not experiment.cancelled:
+        return "queued"
     if all(status == "completed" for status in statuses):
         return "completed"
     if any(status == "completed" for status in statuses):
         return "partial"
+    if experiment.cancelled:
+        return "cancelled"
     return "failed"
 
 
@@ -143,9 +143,10 @@ class ExperimentScheduler:
     def cancel(self, experiment_id: str, cell_id: str | None = None) -> dict:
         with self._lock:
             experiment = self._find(experiment_id)
-            cells = experiment.cells if cell_id is None else [self._cell(experiment, cell_id)]
             if cell_id is None:
-                experiment.cancelled = True
+                experiment.cancelled = True  # before the refresh, so no queued cell starts now
+            self.tick()  # a cell that just finished must not be cancelled after the fact
+            cells = experiment.cells if cell_id is None else [self._cell(experiment, cell_id)]
             for cell in cells:
                 if cell.status == "queued":
                     self._set_status(experiment, cell, "cancelled")
@@ -161,6 +162,13 @@ class ExperimentScheduler:
             cell = self._cell(experiment, cell_id)
             if cell.status not in {"failed", "cancelled"} or not cell.job_id:
                 raise ExperimentConflict("Only a failed or cancelled cell that has started can be resumed.")
+            self.tick()
+            active = sum(
+                1 for item in self._experiments.values()
+                for other in item.cells if other.status in ACTIVE_JOB_STATUSES
+            )
+            if active >= self.concurrency:
+                raise ExperimentConflict("All run slots are busy; resume this cell when one frees up.")
             resumed, message = self.backend.resume(cell.job_id)
             if not resumed:
                 raise ExperimentConflict(message or "This cell cannot be resumed.")

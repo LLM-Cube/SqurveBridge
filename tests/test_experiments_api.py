@@ -238,6 +238,27 @@ class ExperimentControlTests(ExperimentApiTestCase):
         response = self.client.post(f"/api/experiments/{experiment_id}/cells/c1/resume")
         self.assertEqual(response.status_code, 409)
 
+    def test_resuming_a_cell_waits_for_capacity(self):
+        experiment_id = self.create([
+            {"method": "c3sql", "dataset": "spider"},
+            {"method": "dinsql", "dataset": "spider"},
+            {"method": "resdsql", "dataset": "spider"},
+        ]).json["experiment_id"]
+        self.backend.finish("job1", status="failed")
+        self.snapshot(experiment_id)  # job3 starts in the freed slot; two cells now run
+        response = self.client.post(f"/api/experiments/{experiment_id}/cells/c1/resume")
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.backend.resumed, [])
+
+    def test_cancelling_after_some_cells_finished_is_partial(self):
+        experiment_id = self.create([
+            {"method": "c3sql", "dataset": "spider"},
+            {"method": "dinsql", "dataset": "spider"},
+        ]).json["experiment_id"]
+        self.backend.finish("job1")
+        response = self.client.post(f"/api/experiments/{experiment_id}/cancel")
+        self.assertEqual(response.json["status"], "partial")
+
     def test_hosted_space_cannot_run_experiments(self):
         with patch.dict(os.environ, {"SQURVE_DEPLOYMENT_TARGET": "hf-space"}, clear=False):
             response = self.create([{"method": "c3sql", "dataset": "spider"}])

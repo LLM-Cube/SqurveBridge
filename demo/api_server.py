@@ -21,6 +21,7 @@ from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 from flask import Flask, jsonify, request
+from loguru import logger
 from flask_sock import Sock
 from sqlglot import exp, parse
 
@@ -2407,7 +2408,7 @@ def _start_experiment_ticker() -> None:
             try:
                 _experiments.tick()
             except Exception:  # noqa: BLE001 - keep the ticker alive across one bad tick
-                pass
+                logger.exception("Experiment queue tick failed")
 
     threading.Thread(target=run, name="experiment-ticker", daemon=True).start()
 
@@ -2479,7 +2480,7 @@ def experiment_detail(experiment_id: str):
     try:
         return jsonify(_experiments.get(experiment_id))
     except ExperimentNotFound:
-        return _json_error("Experiment not found in this session.", 404)
+        return _json_error("Experiment not found.", 404)
 
 
 
@@ -2493,7 +2494,7 @@ def experiment_events(experiment_id: str):
         events, next_cursor = _experiments.events(experiment_id, cursor)
         snapshot = _experiments.get(experiment_id)
     except ExperimentNotFound:
-        return _json_error("Experiment not found in this session.", 404)
+        return _json_error("Experiment not found.", 404)
     return jsonify({**snapshot, "events": events, "cursor": next_cursor})
 
 
@@ -2502,7 +2503,7 @@ def cancel_experiment(experiment_id: str):
     try:
         return jsonify(_experiments.cancel(experiment_id))
     except ExperimentNotFound:
-        return _json_error("Experiment not found in this session.", 404)
+        return _json_error("Experiment not found.", 404)
 
 
 @app.post("/api/experiments/<experiment_id>/cells/<cell_id>/cancel")
@@ -2510,7 +2511,7 @@ def cancel_experiment_cell(experiment_id: str, cell_id: str):
     try:
         return jsonify(_experiments.cancel(experiment_id, cell_id))
     except ExperimentNotFound:
-        return _json_error("Experiment or cell not found in this session.", 404)
+        return _json_error("Experiment or cell not found.", 404)
 
 
 @app.post("/api/experiments/<experiment_id>/cells/<cell_id>/resume")
@@ -2518,7 +2519,7 @@ def resume_experiment_cell(experiment_id: str, cell_id: str):
     try:
         return jsonify(_experiments.resume(experiment_id, cell_id)), 202
     except ExperimentNotFound:
-        return _json_error("Experiment or cell not found in this session.", 404)
+        return _json_error("Experiment or cell not found.", 404)
     except ExperimentConflict as exc:
         return _json_error(str(exc), 409)
 
@@ -2535,7 +2536,8 @@ _METRIC_LABELS = {
     "ves": "Valid efficiency score",
     "rves": "Relative VES",
 }
-_IDENTIFIER = re.compile(r"[A-Za-z0-9_-]{1,64}")
+# Simple ids; a dot is allowed but never "..", since some ids end up in file paths.
+_IDENTIFIER = re.compile(r"(?!.*\.\.)[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}")
 _MAX_MATRIX_AXIS = 12
 
 
@@ -2586,7 +2588,10 @@ def _run_cost(scores: dict) -> dict:
 
 def _sample_hash(scores: dict) -> str:
     # Sorted, so runs over the same questions align whatever order they were recorded in.
+    # Without per-question rows the questions are unknown, so there is nothing to align on.
     ids = sorted(str(row.get("instance_id")) for row in scores.get("per_sample") or [] if row.get("instance_id") is not None)
+    if not ids:
+        return None
     return hashlib.sha256("\n".join(ids).encode("utf-8")).hexdigest()[:16]
 
 
@@ -2651,9 +2656,9 @@ def _sampling_matches(scores: dict, job: dict | None, split: str, sampling: dict
     return mode != "random" or meta.get("seed") == sampling["seed"]
 
 
-def _archived_scores(split: str, sampling: dict) -> dict[tuple[str, str], dict]:
-    """Latest archived run per (method, dataset) with the requested sampling."""
-    latest: dict[tuple[str, str], dict] = {}
+def _archived_scores(split: str, sampling: dict) -> dict[tuple[str, str], tuple[dict, str]]:
+    """Latest archived run per (method, dataset) with the requested sampling, and where it came from."""
+    latest: dict[tuple[str, str], tuple[dict, str]] = {}
     for source, run_dir in _archive_run_dirs():
         scores = _load_run_scores(run_dir)
         if not scores:
@@ -2663,19 +2668,24 @@ def _archived_scores(split: str, sampling: dict) -> dict[tuple[str, str], dict]:
             continue
         key = (str(scores.get("method")), str(scores.get("dataset")))
         previous = latest.get(key)
-        if previous is None or str(scores.get("timestamp") or "") > str(previous.get("timestamp") or ""):
-            latest[key] = scores
+        if previous is None or str(scores.get("timestamp") or "") > str(previous[0].get("timestamp") or ""):
+            # Demo runs live in this workspace's session store; everything else is archived evidence.
+            latest[key] = (scores, "session" if source == "demo-runs" else "archive")
     return latest
 
 
 def _mark_alignment(cells: list[dict], datasets: list[str]) -> dict:
     alignment = {}
     for dataset in datasets:
-        measured = [cell for cell in cells if cell["dataset"] == dataset and cell["status"] == "ok"]
+        measured = [cell for cell in cells if cell["dataset"] == dataset and cell["status"] == "ok" and cell["sample_hash"]]
         hashes = Counter(cell["sample_hash"] for cell in measured)
         if not hashes:
             alignment[dataset] = {"aligned": False, "sample_hash": None, "methods": []}
             continue
+        # Cells with no per-question rows cannot be shown to share questions with anything.
+        for cell in cells:
+            if cell["dataset"] == dataset and cell["status"] == "ok" and not cell["sample_hash"]:
+                cell["status"] = "unaligned"
         newest = {cell["sample_hash"]: str(cell.get("timestamp") or "") for cell in measured}
         reference = max(hashes, key=lambda value: (hashes[value], newest.get(value, "")))
         for cell in measured:
@@ -2702,7 +2712,7 @@ def _results_matrix(args) -> tuple[dict | None, tuple | None]:
         try:
             sampling = _experiments.experiment_sampling(experiment_id)
         except ExperimentNotFound:
-            return None, _json_error("Experiment not found in this session.", 404)
+            return None, _json_error("Experiment not found.", 404)
     else:
         validation = _sampling_request({
             "sample_limit": args.get("sample_limit", 100),
@@ -2727,11 +2737,12 @@ def _results_matrix(args) -> tuple[dict | None, tuple | None]:
                 if scores:
                     cells.append(_matrix_cell(method, dataset, scores, "session", "ok"))
                 else:
+                    # Execution state is reported as observed; a cancelled run is not a failed one.
                     status = cell.status if cell.status in {"failed", "cancelled"} else "running"
-                    cells.append(_matrix_cell(method, dataset, None, "session", "failed" if status == "cancelled" else status))
+                    cells.append(_matrix_cell(method, dataset, None, "session", status))
             else:
-                scores = archived.get((method, dataset))
-                cells.append(_matrix_cell(method, dataset, scores, "archive" if scores else None, "ok" if scores else "missing"))
+                scores, source = archived.get((method, dataset), (None, None))
+                cells.append(_matrix_cell(method, dataset, scores, source, "ok" if scores else "missing"))
 
     alignment = _mark_alignment(cells, datasets)
     metric_ids = list(dict.fromkeys(
@@ -2827,7 +2838,7 @@ def _benchmark_questions(dataset: str, split: str) -> dict[str, dict]:
     except (OSError, ValueError, TypeError):
         return {}
     record = next((item for item in records if item.get("id") == dataset), None)
-    if not record or not record.get("root_path"):
+    if not record or not record.get("root_path") or not _IDENTIFIER.fullmatch(split):
         return {}
     path = (config_dir / record["root_path"] / split / "dataset.json").resolve()
     try:
@@ -2869,8 +2880,17 @@ def results_diff():
     a_scores, b_scores = _scores_for_run(a_id), _scores_for_run(b_id)
     if not a_scores or not b_scores:
         return _json_error("Run not found.", 404)
-    if _sample_hash(a_scores) != _sample_hash(b_scores):
-        return _json_error("These runs answered different questions and cannot be compared question by question.", 409)
+    dataset = str(request.args.get("dataset") or "").strip()
+    datasets = {str(a_scores.get("dataset")), str(b_scores.get("dataset"))}
+    if len(datasets) != 1 or (dataset and dataset not in datasets):
+        return jsonify({"status": "error", "code": "different_benchmarks",
+                        "message": "Both runs must be on the same benchmark."}), 409
+    a_hash = _sample_hash(a_scores)
+    if a_hash is None or a_hash != _sample_hash(b_scores):
+        return jsonify({"status": "error", "code": "unaligned",
+                        "message": "These runs answered different questions and cannot be compared question by question."}), 409
+    # The public Space shows which questions each method got right, not the SQL it generated.
+    public_sql = deployment_target() != "hf-space"
 
     b_rows = {str(row.get("instance_id")): row for row in b_scores.get("per_sample") or []}
     # Exported evidence keeps only ids and metrics; the installed benchmark supplies the question.
@@ -2887,8 +2907,8 @@ def results_diff():
             "category": _diff_category(a_ok, b_ok),
             "db_id": _public_identifier(db_id) if db_id else None,
             "question": _public_text(a_row.get("question") or b_row.get("question") or known.get("question")),
-            "a": {"correct": a_ok, "sql": _public_text(a_row.get("pred_sql"))},
-            "b": {"correct": b_ok, "sql": _public_text(b_row.get("pred_sql"))},
+            "a": {"correct": a_ok, "sql": _public_text(a_row.get("pred_sql")) if public_sql else None},
+            "b": {"correct": b_ok, "sql": _public_text(b_row.get("pred_sql")) if public_sql else None},
         })
     summary = {name: sum(1 for row in rows if row["category"] == name) for name in _DIFF_CATEGORIES}
     selected = [row for row in rows if not category or row["category"] == category]

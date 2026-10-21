@@ -401,6 +401,7 @@ export default {
   'results.status.missing': '无运行',
   'results.status.running': '运行中',
   'results.status.failed': '失败',
+  'results.status.cancelled': '已取消',
   'results.status.unaligned': '未对齐',
   'results.status.not_computable': '不可计算',
   'evidence.title': '对比与历史',

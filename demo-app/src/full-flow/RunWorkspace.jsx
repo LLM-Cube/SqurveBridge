@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
+  SAMPLE_LIMITS,
   configKey,
   connectionKeyOf,
   resolveFocusedConfig,
@@ -17,7 +18,6 @@ export const RUN_PHASES = [
   'failed',
 ]
 
-const SAMPLE_LIMITS = [3, 10, 20, 50, 100, 200]
 const MAX_BATCH_TARGETS = 24
 
 export const INITIAL_RUN_STATE = {

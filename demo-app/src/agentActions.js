@@ -1,10 +1,9 @@
 /** Agent ↔ page glue: what the Agent is told about the page, and which of its
  * proposed actions the page is willing to carry out after the user confirms.
  */
-import { resolveFocusedConfig } from './full-flow/model.js'
+import { SAMPLE_LIMITS, resolveFocusedConfig } from './full-flow/model.js'
 
 const ID = /^[A-Za-z0-9._-]{1,128}$/
-const SAMPLE_LIMITS = new Set([3, 10, 20, 50, 100, 200])
 const MAX_CELLS = 24
 
 export function pageContextFor({ activeStep, experimentId, connections = [], configs = [], focusedMethod, focusedDatabase }) {
@@ -29,7 +28,7 @@ function normalizeArgs(action, args = {}) {
     const cells = (Array.isArray(args.cells) ? args.cells : []).map(cellOf)
     const sampling = args.sampling || {}
     if (!cells.length || cells.length > MAX_CELLS || cells.some(cell => !cell)) return null
-    if (!SAMPLE_LIMITS.has(Number(sampling.limit)) || !['slice', 'random'].includes(sampling.mode)) return null
+    if (!SAMPLE_LIMITS.includes(Number(sampling.limit)) || !['slice', 'random'].includes(sampling.mode)) return null
     return { cells, sampling: { limit: Number(sampling.limit), mode: sampling.mode, seed: Number.isInteger(sampling.seed) ? sampling.seed : 42 } }
   }
   if (action === 'open_experiment') return isId(args.experiment_id) ? { experiment_id: args.experiment_id } : null

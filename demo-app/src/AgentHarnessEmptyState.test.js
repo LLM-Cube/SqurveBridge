@@ -41,7 +41,7 @@ test('clicking a capability card prefills the composer without sending', async (
   await screen.findByTestId('agent-empty-cards')
   await user.click(screen.getByText('Integrate a method'))
   const textarea = screen.getByPlaceholderText('Type / for skills — connect a model to send')
-  assert.match(textarea.value, /integrate a new Text-to-SQL method/)
+  assert.match(textarea.value, /^\/skill:candidate-reader /)
   // Nothing was sent: the empty-state cards (and greeting) must still be visible.
   assert.ok(screen.getByTestId('agent-empty-cards'))
 })

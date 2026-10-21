@@ -1,3 +1,6 @@
+/** Sample sizes the Demo API accepts for runs and comparisons. */
+export const SAMPLE_LIMITS = Object.freeze([3, 10, 20, 50, 100, 200])
+
 export const METHODS = ['C3SQL', 'DINSQL', 'FinSQL', 'RESDSQL', 'E-SQL', 'SEDE', 'UNISAR', 'GPT Baseline']
 export const DATABASES = ['Spider', 'BIRD', 'BookSQL', 'BULL-EN', 'BULL-CN', 'EHRSQL-2024', 'AmbiDB', 'Spider2']
 
