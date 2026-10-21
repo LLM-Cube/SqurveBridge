@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { groupedBars, heatmapRows, metricOptions, seriesSlot } from './resultsModel.js'
+import {
+  costScatter,
+  diffCandidates,
+  displayNamesFor,
+  groupedBars,
+  heatmapRows,
+  metricOptions,
+  seriesSlot,
+} from './resultsModel.js'
 
 const cell = (method, dataset, status, values = {}, extra = {}) => ({
   method, dataset, status, values, not_computable: {}, cost: { tokens_total: null, latency_s: null }, ...extra,
@@ -88,4 +96,42 @@ test('grouped bars hold one group per benchmark and only comparable values', () 
     { method: 'c3sql', status: 'missing' },
     { method: 'dinsql', status: 'unaligned' },
   ])
+})
+
+const costed = {
+  methods: ['c3sql', 'dinsql', 'finsql'],
+  datasets: ['spider'],
+  metrics: [{ id: 'ex', label: 'Execution accuracy' }],
+  cells: [
+    cell('c3sql', 'spider', 'ok', { ex: 0.8 }, { run_id: 'run-c3', cost: { tokens_total: 9000, latency_s: 38.5 } }),
+    cell('dinsql', 'spider', 'ok', { ex: 0.77 }, { run_id: 'run-din', cost: { tokens_total: null, latency_s: 38.3 } }),
+    cell('finsql', 'spider', 'unaligned', { ex: 0.68 }, { run_id: 'run-fin', cost: { tokens_total: null, latency_s: 19.7 } }),
+  ],
+}
+
+test('costScatter plots comparable cells that report the chosen cost', () => {
+  const latency = costScatter(costed, 'ex', 'latency_s')
+  assert.deepEqual(latency.points.map(point => [point.label, point.x, point.y]), [
+    ['c3sql · spider', 38.5, 0.8],
+    ['dinsql · spider', 38.3, 0.77],
+  ])
+  assert.equal(latency.xMax, 38.5)
+  assert.equal(latency.yMax, 1)
+  assert.deepEqual(latency.omitted, ['finsql · spider'])
+  const tokens = costScatter(costed, 'ex', 'tokens_total')
+  assert.deepEqual(tokens.points.map(point => point.label), ['c3sql · spider'])
+  assert.deepEqual(tokens.omitted, ['dinsql · spider', 'finsql · spider'])
+})
+
+test('diffCandidates offers only comparable runs, grouped by benchmark', () => {
+  assert.deepEqual(diffCandidates(costed), {
+    spider: [{ method: 'c3sql', runId: 'run-c3' }, { method: 'dinsql', runId: 'run-din' }],
+  })
+  assert.deepEqual(diffCandidates({ ...costed, cells: [costed.cells[0]] }), {}, 'one run has nothing to compare against')
+})
+
+test('displayNamesFor maps config ids back to Compose labels', () => {
+  assert.deepEqual(displayNamesFor('gpt-baseline', 'BookSQL'), { method: 'GPT Baseline', database: 'BookSQL' })
+  assert.deepEqual(displayNamesFor('c3sql', 'ehrsql-2024'), { method: 'C3SQL', database: 'EHRSQL-2024' })
+  assert.equal(displayNamesFor('nope', 'spider'), null)
 })

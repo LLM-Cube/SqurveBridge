@@ -42,5 +42,39 @@ class QueryBenchmarkPathTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True)[:400])
 
 
+class QueryByMethodTests(unittest.TestCase):
+    def setUp(self):
+        api_server.app.config.update(TESTING=True)
+        self.calls = []
+
+    def query(self, **payload):
+        provider = {"id": "deepseek", "default_model": "deepseek-flash", "models": ["deepseek-flash"], "configured": True}
+
+        class FakeDemo:
+            def generate_sql(inner, **kwargs):
+                self.calls.append(kwargs)
+                return {"status": "success", "sql": "SELECT 1", "trace": []}
+
+        body = {"question": "How many singers are there?", "db_id": "concert_singer", "provider": "deepseek", **payload}
+        with mock.patch.dict(os.environ, {"SQURVE_DEPLOYMENT_TARGET": "local"}, clear=False), \
+                mock.patch.object(api_server, "_llm_provider_catalog", return_value=[provider]), \
+                mock.patch.object(api_server, "_get_demo", return_value=FakeDemo()):
+            return api_server.app.test_client().post("/api/query", json=body)
+
+    def test_a_method_runs_its_reproduce_workflow_for_the_database_benchmark(self):
+        config = next(item for item in api_server._config_catalog() if (item["method"], item["dataset"]) == ("c3sql", "spider"))
+        expected = [stage["actor"] for stage in config["stages"] if stage.get("actor")]
+        response = self.query(method="c3sql")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(self.calls[0]["use_workflow"])
+        self.assertEqual(self.calls[0]["workflow_actor_lis"], expected)
+        self.assertEqual(response.json["method"], "c3sql")
+
+    def test_a_method_without_a_config_for_that_benchmark_is_rejected(self):
+        response = self.query(method="no-such-method")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.calls, [])
+
+
 if __name__ == "__main__":
     unittest.main()

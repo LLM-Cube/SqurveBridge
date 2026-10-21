@@ -963,6 +963,19 @@ def query():
     mode = payload.get("mode", "direct")
     actors = payload.get("actors") or []
     generator = payload.get("generator") or "DINSQLGenerator"
+    method = str(payload.get("method") or "").strip()
+    if method:
+        # Replay one question the way a reproduce run does: the method's workflow
+        # for the benchmark this database belongs to.
+        benchmark = str(database.get("benchmark") or "")
+        config = next(
+            (item for item in _config_catalog() if item["method"] == method and item["dataset"] == benchmark),
+            None,
+        )
+        workflow = [stage["actor"] for stage in (config or {}).get("stages") or [] if stage.get("actor")]
+        if not workflow:
+            return _json_error(f"No reproduce workflow for {method} on {benchmark or 'this database'}.")
+        mode, actors = "workflow", workflow
     hosted = deployment_target() == "hf-space"
     if hosted:
         session_id, _ = _browser_session(create=False)
@@ -999,6 +1012,8 @@ def query():
         workflow_actor_lis=actors,
         generate_type=generator,
     )
+    if method:
+        result["method"] = method
     if result.get("status") == "success":
         result["trace"] = _serialize_public_query_trace(result.get("trace"))
         if not hosted:
@@ -2769,6 +2784,130 @@ def results_matrix_csv():
         mimetype="text/csv",
         headers={"Content-Disposition": "attachment; filename=squrve-results.csv"},
     )
+
+
+_DIFF_CATEGORIES = ("both_right", "a_only", "b_only", "both_wrong", "unknown")
+_DIFF_TEXT_LIMIT = 2000
+
+
+def _scores_for_run(run_id: str) -> dict | None:
+    resolved = _resolve_archive_run(run_id)
+    return _load_run_scores(resolved[1]) if resolved else None
+
+
+def _correctness(row: dict | None) -> bool | None:
+    value = (row or {}).get("ex")
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value >= 1
+    return None
+
+
+def _diff_category(a: bool | None, b: bool | None) -> str:
+    if a is None or b is None:
+        return "unknown"
+    if a and b:
+        return "both_right"
+    if a:
+        return "a_only"
+    if b:
+        return "b_only"
+    return "both_wrong"
+
+
+_benchmark_question_cache: dict[tuple[str, float], dict[str, dict]] = {}
+
+
+def _benchmark_questions(dataset: str, split: str) -> dict[str, dict]:
+    """instance_id → {db_id, question} from an installed benchmark split, or {} when absent."""
+    config_dir = _project_root / "config"
+    try:
+        records = json.loads((config_dir / "sys_config.json").read_text(encoding="utf-8")).get("benchmark", [])
+    except (OSError, ValueError, TypeError):
+        return {}
+    record = next((item for item in records if item.get("id") == dataset), None)
+    if not record or not record.get("root_path"):
+        return {}
+    path = (config_dir / record["root_path"] / split / "dataset.json").resolve()
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return {}
+    key = (str(path), mtime)
+    if key not in _benchmark_question_cache:
+        try:
+            rows = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            rows = []
+        _benchmark_question_cache.clear()
+        _benchmark_question_cache[key] = {
+            str(row.get("instance_id")): {"db_id": row.get("db_id"), "question": row.get("question")}
+            for row in rows if isinstance(row, dict) and row.get("instance_id") is not None
+        }
+    return _benchmark_question_cache[key]
+
+
+def _public_text(value) -> str | None:
+    return value[:_DIFF_TEXT_LIMIT] if isinstance(value, str) else None
+
+
+@app.get("/api/results/diff")
+def results_diff():
+    a_id = str(request.args.get("a") or "").strip()
+    b_id = str(request.args.get("b") or "").strip()
+    if not _safe_archive_run_id(a_id) or not _safe_archive_run_id(b_id):
+        return _json_error("a and b must be run identifiers.")
+    category = str(request.args.get("category") or "").strip()
+    if category and category not in _DIFF_CATEGORIES:
+        return _json_error(f"category must be one of: {', '.join(_DIFF_CATEGORIES)}.")
+    try:
+        limit = min(200, max(1, int(request.args.get("limit", 50))))
+        offset = max(0, int(request.args.get("offset", 0)))
+    except ValueError:
+        return _json_error("limit and offset must be integers.")
+    a_scores, b_scores = _scores_for_run(a_id), _scores_for_run(b_id)
+    if not a_scores or not b_scores:
+        return _json_error("Run not found.", 404)
+    if _sample_hash(a_scores) != _sample_hash(b_scores):
+        return _json_error("These runs answered different questions and cannot be compared question by question.", 409)
+
+    b_rows = {str(row.get("instance_id")): row for row in b_scores.get("per_sample") or []}
+    # Exported evidence keeps only ids and metrics; the installed benchmark supplies the question.
+    installed = _benchmark_questions(str(a_scores.get("dataset") or ""), str(a_scores.get("split") or "dev"))
+    rows = []
+    for a_row in a_scores.get("per_sample") or []:
+        instance_id = str(a_row.get("instance_id"))
+        b_row = b_rows.get(instance_id) or {}
+        a_ok, b_ok = _correctness(a_row), _correctness(b_row)
+        known = installed.get(instance_id, {})
+        db_id = a_row.get("db_id") or b_row.get("db_id") or known.get("db_id")
+        rows.append({
+            "instance_id": _public_identifier(instance_id),
+            "category": _diff_category(a_ok, b_ok),
+            "db_id": _public_identifier(db_id) if db_id else None,
+            "question": _public_text(a_row.get("question") or b_row.get("question") or known.get("question")),
+            "a": {"correct": a_ok, "sql": _public_text(a_row.get("pred_sql"))},
+            "b": {"correct": b_ok, "sql": _public_text(b_row.get("pred_sql"))},
+        })
+    summary = {name: sum(1 for row in rows if row["category"] == name) for name in _DIFF_CATEGORIES}
+    selected = [row for row in rows if not category or row["category"] == category]
+
+    def side(scores: dict) -> dict:
+        return {
+            "run_id": _public_identifier(scores.get("run_id")),
+            "method": _public_identifier(scores.get("method")),
+            "dataset": _public_identifier(scores.get("dataset")),
+        }
+
+    return jsonify({
+        "a": side(a_scores),
+        "b": side(b_scores),
+        "summary": summary,
+        "total": len(selected),
+        "offset": offset,
+        "rows": selected[offset:offset + limit],
+    })
 
 @app.post("/api/evaluations/<job_id>/profile")
 def profile_evaluation(job_id: str):

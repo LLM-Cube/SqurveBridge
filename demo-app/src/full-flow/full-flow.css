@@ -6382,3 +6382,31 @@
 .flow-demo .experiment-grid td label { display: flex; align-items: center; justify-content: center; gap: 6px; height: 100%; padding: 0 6px; color: #2e2618; cursor: pointer; font-variant-numeric: tabular-nums; }
 .flow-demo .experiment-grid td input { accent-color: #2a78d6; }
 .flow-demo .experiment-grid .experiment-grid-na { color: #9a8f7d; }
+
+.flow-demo .results-scatter { display: grid; gap: 8px; margin: 0; }
+.flow-demo .results-scatter figcaption { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; color: var(--viz-ink-muted); font-size: 12px; }
+.flow-demo .results-scatter figcaption label { display: grid; gap: 4px; }
+.flow-demo .results-scatter figcaption select { min-height: 30px; border: 1px solid #e0d5c1; border-radius: 6px; background: #fff; color: var(--viz-ink); }
+.flow-demo .results-scatter svg { width: 100%; max-width: 720px; height: auto; overflow: visible; }
+.flow-demo .results-grid { stroke: #e6dccb; stroke-width: 1; }
+.flow-demo .results-axis { fill: var(--viz-ink-muted); font-size: 11px; }
+.flow-demo .results-point { fill: var(--series-1); stroke: var(--viz-surface); stroke-width: 2; }
+.flow-demo .results-leader { stroke: var(--viz-ink-muted); stroke-width: 1; }
+.flow-demo .results-point-label { fill: var(--viz-ink); font-size: 11px; }
+
+.flow-demo .results-diff { display: grid; gap: 10px; border-top: 1px solid #e6dccb; padding-top: 14px; }
+.flow-demo .results-diff h4 { margin: 0 0 2px; color: var(--viz-ink); }
+.flow-demo .results-diff header p { margin: 0; color: var(--viz-ink-muted); font-size: 12px; }
+.flow-demo .results-diff-summary { display: flex; flex-wrap: wrap; gap: 6px; }
+.flow-demo .results-diff-summary button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #e0d5c1; border-radius: 999px; padding: 4px 10px; background: #fff; color: var(--viz-ink); font-size: 12px; }
+.flow-demo .results-diff-summary button.active { border-color: var(--series-1); background: #cde2fb; }
+.flow-demo .results-diff-table { max-width: 100%; overflow-x: auto; }
+.flow-demo .results-diff-table table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.flow-demo .results-diff-table th,
+.flow-demo .results-diff-table td { border-bottom: 1px solid #efe9de; padding: 6px 8px; text-align: left; vertical-align: top; color: var(--viz-ink); }
+.flow-demo .results-diff-table th { color: var(--viz-ink-muted); font-weight: 600; }
+.flow-demo .results-diff-table td small { display: block; color: var(--viz-ink-muted); }
+.flow-demo .results-diff-replay { display: flex; flex-wrap: wrap; gap: 4px; }
+.flow-demo .results-diff-replay button { border: 1px solid #e0d5c1; border-radius: 6px; padding: 2px 8px; background: #fff; color: var(--viz-ink); font-size: 11px; white-space: nowrap; }
+.flow-demo .results-diff-table td:last-child { width: 1%; white-space: nowrap; }
+.flow-demo .results-diff-replay { flex-direction: column; flex-wrap: nowrap; align-items: stretch; }

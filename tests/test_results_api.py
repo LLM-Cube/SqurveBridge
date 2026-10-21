@@ -200,5 +200,64 @@ class MatrixTests(ResultsApiTestCase):
         self.assertIn("alpha,minibench,ok", lines[1])
 
 
+class DiffTests(ResultsApiTestCase):
+    def setUp(self):
+        super().setUp()
+        self.archive(make_scores("alpha", "minibench", correct=[1, 1, 0, 0], run_id="run-a"))
+        self.archive(make_scores("beta", "minibench", correct=[1, 0, 1, 0], run_id="run-b"))
+
+    def diff(self, **params):
+        return self.client.get("/api/results/diff", query_string={"a": "run-a", "b": "run-b", **params})
+
+    def test_questions_are_split_by_which_method_got_them_right(self):
+        response = self.diff()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["summary"], {"both_right": 1, "a_only": 1, "b_only": 1, "both_wrong": 1, "unknown": 0})
+        row = next(item for item in response.json["rows"] if item["instance_id"] == "q1")
+        self.assertEqual(row["category"], "a_only")
+        self.assertEqual(row["question"], "Question q1?")
+        self.assertEqual(row["db_id"], "concert_singer")
+        self.assertEqual(row["a"], {"correct": True, "sql": "SELECT 1 -- alpha"})
+        self.assertEqual(row["b"], {"correct": False, "sql": "SELECT 1 -- beta"})
+        self.assertEqual(response.json["a"]["method"], "alpha")
+        self.assertEqual(response.json["b"]["method"], "beta")
+
+    def test_rows_can_be_filtered_and_paged(self):
+        only_b = self.diff(category="b_only").json
+        self.assertEqual([row["instance_id"] for row in only_b["rows"]], ["q2"])
+        self.assertEqual(only_b["total"], 1)
+        paged = self.diff(limit=2, offset=2).json
+        self.assertEqual(len(paged["rows"]), 2)
+        self.assertEqual(paged["total"], 4)
+
+    def test_runs_over_different_questions_cannot_be_diffed(self):
+        self.archive(make_scores("gamma", "minibench", correct=[1, 0, 1, 0], ids=["x", "y", "z", "w"], run_id="run-c"))
+        response = self.diff(b="run-c")
+        self.assertEqual(response.status_code, 409)
+
+    def test_unknown_runs_and_bad_parameters_are_rejected(self):
+        self.assertEqual(self.diff(b="no-such-run").status_code, 404)
+        self.assertEqual(self.diff(a="../x").status_code, 400)
+        self.assertEqual(self.diff(category="sideways").status_code, 400)
+
+
+SPIDER_DEV = Path(__file__).resolve().parents[1] / "benchmarks" / "spider" / "dev" / "dataset.json"
+
+
+@unittest.skipUnless(SPIDER_DEV.is_file(), "Spider dev is not installed")
+class DiffEnrichmentTests(ResultsApiTestCase):
+    def test_recorded_runs_without_question_text_borrow_it_from_the_installed_benchmark(self):
+        for method, run_id, correct in (("alpha", "run-ea", [1, 0]), ("beta", "run-eb", [0, 0])):
+            scores = make_scores(method, "spider", correct=correct, run_id=run_id, ids=["dev_0", "dev_1"])
+            for row in scores["per_sample"]:
+                row.pop("question"), row.pop("db_id"), row.pop("pred_sql")
+            self.archive(scores)
+        rows = self.client.get("/api/results/diff", query_string={"a": "run-ea", "b": "run-eb"}).json["rows"]
+        first = next(row for row in rows if row["instance_id"] == "dev_0")
+        self.assertEqual(first["db_id"], "concert_singer")
+        self.assertEqual(first["question"], "How many singers do we have?")
+        self.assertIsNone(first["a"]["sql"])
+
+
 if __name__ == "__main__":
     unittest.main()

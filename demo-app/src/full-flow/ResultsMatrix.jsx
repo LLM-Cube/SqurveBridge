@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { resolveFocusedConfig } from './model.js'
+import { CostScatter, DiffPanel } from './ResultsInsights.jsx'
 import { groupedBars, heatmapRows, metricOptions, seriesSlot } from './resultsModel.js'
 
 const SAMPLE_LIMITS = [3, 10, 20, 50, 100, 200]
@@ -68,7 +69,10 @@ function Heatmap({ matrix, metricId, onOpenRun, t }) {
 }
 
 function GroupedBars({ matrix, metricId, allMethods, t }) {
+  // Benchmarks with nothing to draw stay in the heatmap; here they would only add noise.
   const groups = groupedBars(matrix, metricId, allMethods)
+    .filter(group => group.bars.length > 0)
+    .map(group => ({ ...group, absent: group.absent.filter(item => item.status !== 'missing') }))
   const plotted = unique(groups.flatMap(group => group.bars.map(bar => bar.method)))
   if (!plotted.length) return null
   return (
@@ -122,6 +126,7 @@ export default function ResultsMatrix({
   sampleSeed = 42,
   liveEvaluation = false,
   onOpenRun,
+  onReplay,
   t,
 }) {
   const [source, setSource] = useState(experimentId ? 'experiment' : liveEvaluation ? 'archive' : 'recorded')
@@ -251,6 +256,13 @@ export default function ResultsMatrix({
             <p className="results-note">{t('results.unalignedNote')}</p>
           )}
           <GroupedBars matrix={matrix} metricId={activeMetric} allMethods={allMethods} t={t} />
+          <CostScatter
+            matrix={matrix}
+            metricId={activeMetric}
+            metricLabel={metrics.find(item => item.id === activeMetric)?.label || activeMetric}
+            t={t}
+          />
+          <DiffPanel api={api} matrix={matrix} onReplay={onReplay} t={t} />
         </>
       )}
     </section>

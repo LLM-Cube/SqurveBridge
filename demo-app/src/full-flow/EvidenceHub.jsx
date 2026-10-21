@@ -20,6 +20,7 @@ export default function EvidenceHub({
   configs = [],
   connections = [],
   experimentId = '',
+  onReplay,
   t,
 }) {
   const [expandedRunId, setExpandedRunId] = useState(archiveFocusRunId || '')
@@ -104,6 +105,7 @@ export default function EvidenceHub({
             sampleSeed={sampleSeed}
             liveEvaluation={liveEvaluation}
             onOpenRun={expandRun}
+            onReplay={onReplay}
             t={t}
           />
           <Archive

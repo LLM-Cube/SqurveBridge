@@ -163,6 +163,7 @@ export default function QueryWorkspace({
   postJson,
   api,
   adoptedSql = null,
+  prefill = null,
   onAdoptedSqlHandled,
   onAskPi,
   t,
@@ -267,6 +268,12 @@ export default function QueryWorkspace({
       })
     return () => { active = false }
   }, [selectedDb, api])
+
+  useEffect(() => {
+    if (!prefill?.id) return
+    if (databases.some(item => item.id === prefill.dbId)) setSelectedDb(prefill.dbId)
+    if (prefill.question) setQuestion(prefill.question)
+  }, [prefill?.id])
 
   useEffect(() => {
     if (!adoptedSql?.id) return

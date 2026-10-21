@@ -2,6 +2,8 @@
  * results matrix response to what the heatmap and bar chart draw.
  */
 
+import { DATABASES, METHODS, configKey } from './model.js'
+
 export const HEAT_STEPS = 7
 
 const ORDER = ['ex', 'em', 'sf1', 'ves', 'rves', 'sc']
@@ -88,4 +90,45 @@ export function groupedBars(matrix, metricId, allMethods) {
     }
     return { dataset, bars, absent, max: scale.max }
   })
+}
+
+/** Accuracy against one cost (tokens or latency) for every comparable cell that reports it. */
+export function costScatter(matrix, metricId, costKey) {
+  const points = []
+  const omitted = []
+  for (const cell of matrix?.cells || []) {
+    const label = `${cell.method} · ${cell.dataset}`
+    const y = comparableValue(cell, metricId)
+    const x = cell?.cost?.[costKey]
+    if (y === null || typeof x !== 'number' || !Number.isFinite(x)) {
+      if (cell?.status !== 'missing') omitted.push(label)
+      continue
+    }
+    points.push({ label, method: cell.method, dataset: cell.dataset, x, y, runId: cell.run_id || null })
+  }
+  const scale = scaleFor(matrix, metricId)
+  return {
+    points,
+    omitted,
+    xMax: Math.max(0, ...points.map(point => point.x)),
+    yMax: scale.unit ? 1 : Math.max(0, ...points.map(point => point.y)),
+    unit: scale.unit,
+  }
+}
+
+/** Per benchmark, the comparable runs a per-question diff can pair up. */
+export function diffCandidates(matrix) {
+  const byDataset = {}
+  for (const cell of matrix?.cells || []) {
+    if (cell?.status !== 'ok' || !cell.run_id) continue
+    ;(byDataset[cell.dataset] ||= []).push({ method: cell.method, runId: cell.run_id })
+  }
+  return Object.fromEntries(Object.entries(byDataset).filter(([, runs]) => runs.length > 1))
+}
+
+/** Compose labels for a config's method and dataset ids, or null when unknown. */
+export function displayNamesFor(methodId, datasetId) {
+  const method = METHODS.find(name => configKey(name, 'x') === configKey(methodId, 'x'))
+  const database = DATABASES.find(name => configKey('x', name) === configKey('x', datasetId))
+  return method && database ? { method, database } : null
 }
