@@ -1,6 +1,6 @@
 # Triage Labels
 
-The skills speak in terms of five canonical triage roles. This file maps those roles to the labels used in this repo's local issue tracker.
+The skills speak in terms of five canonical triage roles. This file maps those roles to the labels used in GitHub Issues for `LLM-Cube/SqurveBridge`.
 
 | Label in mattpocock/skills | Label in this repo | Meaning |
 | --- | --- | --- |
