@@ -797,6 +797,73 @@ def update_provider():
     return jsonify({"status": "ok", "provider": status, "llm_providers": _llm_provider_catalog()})
 
 
+_listing_rate_window = 60.0
+_listing_rate_limit = 30
+_listing_rate_hits: dict[str, list[float]] = {}
+_listing_rate_lock = threading.Lock()
+
+
+def _listing_rate_allowed(identity: str) -> bool:
+    now = time.monotonic()
+    with _listing_rate_lock:
+        hits = [t for t in _listing_rate_hits.get(identity, ()) if now - t < _listing_rate_window]
+        allowed = len(hits) < _listing_rate_limit
+        if allowed:
+            hits.append(now)
+        _listing_rate_hits[identity] = hits
+        if len(_listing_rate_hits) > 4096:
+            for key in [k for k, v in _listing_rate_hits.items() if not v or now - v[-1] >= _listing_rate_window]:
+                del _listing_rate_hits[key]
+    return allowed
+
+
+@app.post("/api/llm/models")
+def list_llm_models():
+    origin_error = _same_origin_error()
+    if origin_error:
+        return origin_error
+    payload = request.get_json(silent=True) or {}
+    provider = str(payload.get("provider") or "").strip()
+    if provider not in _supported_providers:
+        return _json_error("Unsupported provider.")
+    hosted = deployment_target() == "hf-space"
+    session_id, _ = _browser_session(create=False)
+    if hosted and not _listing_rate_allowed(session_id or request.remote_addr or "anonymous"):
+        return _json_error("Too many model refreshes; retry shortly.", 429)
+    api_key = payload.get("api_key")
+    session_base_url = None
+    if not (isinstance(api_key, str) and api_key.strip()):
+        saved = _sql_credentials.get(session_id or "") if hosted else None
+        if saved is not None and saved.provider == provider:
+            api_key, session_base_url = saved.api_key, saved.base_url
+        elif not hosted:
+            load_dotenv(_project_root / ".env")
+            api_key = resolve_api_key(provider, None)
+    try:
+        # Reuses the SQL credential checks so endpoint and workspace IDs are
+        # validated exactly as they are when saving; the model is a placeholder.
+        credential = _credential_from_payload({**payload, "api_key": api_key, "model": "listing"})
+    except SqlAuthError as exc:
+        return _json_error(f"Invalid request: {exc.code}.")
+    base_url = session_base_url or credential.base_url
+    fallback = _provider_model_ids().get(provider) or []
+    listing = model_catalog.list_provider_models(
+        provider,
+        credential.api_key,
+        fallback=fallback,
+        url=f"{base_url}/models" if base_url else None,
+        refresh=bool(payload.get("refresh")),
+    )
+    models = listing["models"]
+    preferred = model_catalog.DEFAULT_MODELS.get(provider)
+    return jsonify({
+        "status": "ok",
+        "provider": provider,
+        **listing,
+        "default_model": preferred if preferred in models else (models[0] if models else ""),
+    })
+
+
 @app.get("/api/capabilities")
 def capabilities():
     return jsonify({

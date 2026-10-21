@@ -24,3 +24,25 @@ export function modelsForProvider(providerEntry, providerId) {
   if (Array.isArray(resolved) && resolved.length) return resolved
   return officialModelsFor(providerId || providerEntry?.id)
 }
+
+/** Ask the backend which models this key can use; never throws.
+ *
+ * `post(path, body)` is the caller's JSON poster. The key is sent only when the
+ * user typed one, so a server-held key (local .env or the hosted session) is
+ * used otherwise.
+ */
+export async function fetchLiveModels(post, { provider, apiKey = '', endpointId = '', workspaceId = '', refresh = false }) {
+  const body = { provider, endpoint_id: endpointId, workspace_id: workspaceId, refresh }
+  if (apiKey.trim()) body.api_key = apiKey.trim()
+  try {
+    const data = await post('/api/llm/models', body)
+    return {
+      provider,
+      models: Array.isArray(data?.models) ? data.models : [],
+      source: data?.models_source === 'live' ? 'live' : 'fallback',
+      error: data?.models_error || null,
+    }
+  } catch (error) {
+    return { provider, models: [], source: 'fallback', error: error?.message || 'Could not list models.' }
+  }
+}

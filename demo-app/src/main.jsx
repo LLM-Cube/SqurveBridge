@@ -6,7 +6,7 @@ import SqlAuthDialog from './SqlAuthDialog.jsx'
 import { deploymentTarget, featureEnabled } from './runtimeMode.js'
 import { detectLocale, translate } from './i18n/index.js'
 import { sanitizeRunError } from './full-flow/RunWorkspace.jsx'
-import { modelsForProvider } from './llmCatalog.js'
+import { fetchLiveModels, modelsForProvider } from './llmCatalog.js'
 
 const api = async (path, options = {}) => {
   const response = await fetch(path, options)
@@ -45,9 +45,11 @@ function ProviderConfig({
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const [live, setLive] = useState(null)
   const panelRef = useRef(null)
   const selected = providers.find(item => item.id === provider)
-  const catalogModels = modelsForProvider(selected, provider)
+  const liveActive = live?.provider === provider && live.source === 'live' && live.models.length > 0
+  const catalogModels = liveActive ? live.models : modelsForProvider(selected, provider)
 
   useEffect(() => {
     const current = health?.provider?.provider
@@ -80,6 +82,15 @@ function ProviderConfig({
     setModel(preferred || catalog?.default_model || '')
     setMessage('')
     setError('')
+    setLive(null)
+  }
+
+  const refreshModels = async () => {
+    setBusy(true); setError('')
+    const result = await fetchLiveModels(postJson, { provider, apiKey, refresh: true })
+    setLive(result)
+    if (result.source === 'live' && result.models.length && !result.models.includes(model)) setModel(result.models[0])
+    setBusy(false)
   }
 
   const close = () => {
@@ -137,7 +148,11 @@ function ProviderConfig({
       <datalist id="local-model-catalog">
         {catalogModels.map(item => <option key={item} value={item} />)}
       </datalist>
-      <small>Pick a catalog model above, or type any model ID this provider supports.</small>
+      <div className="model-source-row">
+        <button className="button secondary" type="button" disabled={busy || !provider} onClick={refreshModels}>Refresh models</button>
+        <small className="model-source-badge" data-source={liveActive ? 'live' : 'catalog'}>{liveActive ? 'Live list from provider' : 'Built-in list'}{live?.provider === provider && live.error ? ` · ${live.error}` : ''}</small>
+      </div>
+      <small>Pick a model above, or type any model ID this provider supports. Uses the key above, or the saved one.</small>
     </div>
     <label className="field"><span>API key{selected?.env_var ? ` · ${selected.env_var}` : ''}</span><input type="password" aria-label={selected?.env_var ? `API key · ${selected.env_var}` : 'API key'} autoComplete="off" spellCheck="false" value={apiKey} onChange={event => setApiKey(event.target.value)} placeholder={selected?.configured ? 'Leave blank to keep current key' : 'Paste API key'} /></label>
     <label className="persist-toggle"><input type="checkbox" checked={persist} onChange={event => setPersist(event.target.checked)} /><span>Write to repo-root .env</span></label>
