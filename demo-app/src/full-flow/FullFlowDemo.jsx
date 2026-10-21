@@ -4,12 +4,14 @@ import BoardWorkspace from './BoardWorkspace.jsx'
 import ConfigurationStudio from './ConfigurationStudio.jsx'
 import ConnectionComposer from './ConnectionComposer.jsx'
 import EvidenceHub from './EvidenceHub.jsx'
+import ExperimentGrid from './ExperimentGrid.jsx'
 import QueryWorkspace from './QueryWorkspace.jsx'
 import {
   DATABASES,
   METHODS,
   ensureConnection,
   resolveFocusedConfig,
+  selectGridLine,
   selectedDatabasesFromConnections,
   selectedMethodsFromConnections,
   toggleConnection,
@@ -31,6 +33,7 @@ const SPLIT_STORAGE_KEY = 'squrve-demo-shell-layout'
 // from touching pages whose props did not change.
 const MemoConfigurationStudio = memo(ConfigurationStudio)
 const MemoConnectionComposer = memo(ConnectionComposer)
+const MemoExperimentGrid = memo(ExperimentGrid)
 const MemoQueryWorkspace = memo(QueryWorkspace)
 const MemoBoardWorkspace = memo(BoardWorkspace)
 const MemoEvidenceHub = memo(EvidenceHub)
@@ -73,6 +76,7 @@ export default function FullFlowDemo({
   const [sampleMode, setSampleMode] = useState('slice')
   const [sampleSeed, setSampleSeed] = useState(42)
   const [runState, setRunState] = useState(INITIAL_RUN_STATE)
+  const [experimentId, setExperimentId] = useState('')
   const [chatKey, setChatKey] = useState(0)
   const [harnessTask, setHarnessTask] = useState(null)
   const [shellLayout, setShellLayout] = useState(loadShellLayout)
@@ -163,6 +167,10 @@ export default function FullFlowDemo({
     syncFocus(next)
   }, [commitConnections, applyFocus, syncFocus])
 
+  const onSelectGridLine = useCallback(line => {
+    syncFocus(commitConnections(selectGridLine(connectionsRef.current, configs, line)))
+  }, [commitConnections, syncFocus, configs])
+
   const onFocusConnection = useCallback((method, database) => {
     commitConnections(ensureConnection(connectionsRef.current, method, database))
     applyFocus(method, database)
@@ -220,6 +228,18 @@ export default function FullFlowDemo({
       />
     ),
     compose: (
+      <>
+      <MemoExperimentGrid
+        api={api}
+        configs={configs}
+        connections={connections}
+        sampleLimit={sampleLimit}
+        sampleMode={sampleMode}
+        sampleSeed={sampleSeed}
+        onToggleConnection={onToggleConnection}
+        onSelectLine={onSelectGridLine}
+        t={t}
+      />
       <MemoConnectionComposer
         selectedMethods={selectedMethods}
         selectedDatabases={selectedDatabases}
@@ -232,6 +252,7 @@ export default function FullFlowDemo({
         focusedConfig={focusedConfig}
         t={t}
       />
+      </>
     ),
     query: (
       <MemoQueryWorkspace
@@ -268,6 +289,7 @@ export default function FullFlowDemo({
         postJson={postJson}
         api={api}
         onRunStateChange={onRunStateChange}
+        onExperimentChange={setExperimentId}
         liveEvaluation={Boolean(capabilities?.deployment?.features?.live_evaluation)}
         t={t}
       />
@@ -284,6 +306,9 @@ export default function FullFlowDemo({
         sampleLimit={sampleLimit}
         sampleMode={sampleMode}
         sampleSeed={sampleSeed}
+        configs={configs}
+        connections={connections}
+        experimentId={experimentId}
         t={t}
       />
     ),

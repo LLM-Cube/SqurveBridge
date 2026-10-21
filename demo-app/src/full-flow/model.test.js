@@ -6,6 +6,9 @@ import {
   buildConnections,
   buildReadyKeys,
   configKey,
+  connectionKeyOf,
+  experimentGrid,
+  selectGridLine,
   ensureConnection,
   hasConnection,
   resolveFocusedConfig,
@@ -101,4 +104,48 @@ test('normalizes only plain public GitHub repository URLs', () => {
   ]) {
     assert.equal(normalizePublicGitHubUrl(value), '')
   }
+})
+
+test('experimentGrid marks runnable, selected and last-scored cells', () => {
+  const configs = [
+    { method: 'c3sql', dataset: 'spider' },
+    { method: 'dinsql', dataset: 'spider' },
+    { method: 'c3sql', dataset: 'bird' },
+  ]
+  const connections = [{ method: 'C3SQL', database: 'Spider' }]
+  const scores = new Map([[configKey('c3sql', 'spider'), 0.8]])
+  const rows = experimentGrid(configs, connections, scores)
+  assert.equal(rows.length, METHODS.length)
+  const c3sql = rows.find(row => row.method === 'C3SQL')
+  assert.equal(c3sql.cells.length, DATABASES.length)
+  const spider = c3sql.cells.find(item => item.database === 'Spider')
+  assert.deepEqual(
+    { runnable: spider.runnable, selected: spider.selected, score: spider.score },
+    { runnable: true, selected: true, score: 0.8 },
+  )
+  const bird = c3sql.cells.find(item => item.database === 'BIRD')
+  assert.deepEqual({ runnable: bird.runnable, selected: bird.selected, score: bird.score }, { runnable: true, selected: false, score: null })
+  const booksql = c3sql.cells.find(item => item.database === 'BookSQL')
+  assert.equal(booksql.runnable, false)
+})
+
+test('selectGridLine adds every runnable cell of a row, then removes them on a second press', () => {
+  const configs = [
+    { method: 'c3sql', dataset: 'spider' },
+    { method: 'c3sql', dataset: 'bird' },
+    { method: 'dinsql', dataset: 'spider' },
+  ]
+  const start = [{ method: 'DINSQL', database: 'Spider' }]
+  const added = selectGridLine(start, configs, { method: 'C3SQL' })
+  assert.deepEqual(added.map(connectionKeyOf).sort(), ['bird/c3sql', 'spider/c3sql', 'spider/dinsql'])
+  const removed = selectGridLine(added, configs, { method: 'C3SQL' })
+  assert.deepEqual(removed.map(connectionKeyOf), ['spider/dinsql'])
+  const column = selectGridLine(start, configs, { database: 'Spider' })
+  assert.deepEqual(column.map(connectionKeyOf).sort(), ['spider/c3sql', 'spider/dinsql'])
+})
+
+test('selectGridLine never leaves the selection empty', () => {
+  const configs = [{ method: 'c3sql', dataset: 'spider' }]
+  const only = [{ method: 'C3SQL', database: 'Spider' }]
+  assert.deepEqual(selectGridLine(only, configs, { method: 'C3SQL' }), only)
 })

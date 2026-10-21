@@ -103,6 +103,7 @@ class CreateExperimentTests(ExperimentApiTestCase):
             response.json["cells"],
             [{"method": "no-such-method", "dataset": "spider", "error_code": "config_missing"}],
         )
+        self.assertIn("no-such-method/spider (config_missing)", response.json["message"])
         self.assertEqual(self.backend.launched, [])
 
     def test_cells_without_a_provider_key_are_rejected(self):

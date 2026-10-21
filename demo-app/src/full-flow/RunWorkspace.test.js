@@ -14,6 +14,7 @@ const unregister = register()
 
 const {
   default: RunWorkspace,
+  jobsFromExperiment,
   mergeJobDetail,
   resolveJobArtifact,
   sanitizeRunError,
@@ -166,38 +167,67 @@ test('launches reproduce/run.py through evaluations for one Compose connection',
   assert.match(states.at(-1).context.command, /reproduce\/run\.py/)
 })
 
-test('launches comparisons for multiple Compose connections', async () => {
+test('launches one experiment for multiple Compose connections across benchmarks', async () => {
   const calls = []
   const secondConfig = {
     method: 'c3sql',
-    dataset: 'spider',
-    config_path: 'reproduce/configs/spider/c3sql.json',
+    dataset: 'bird',
+    config_path: 'reproduce/configs/bird/c3sql.json',
     stages: [{ id: 'generate', type: 'GenerateTask', actor: 'C3SQLGenerator' }],
   }
+  const experiments = []
   renderRun({
     selectedConnections: [
       { method: 'DINSQL', database: 'Spider' },
-      { method: 'C3SQL', database: 'Spider' },
+      { method: 'C3SQL', database: 'BIRD' },
     ],
     configs: [baseConfig, secondConfig],
+    onExperimentChange: id => experiments.push(id),
     postJson: async (path, body) => {
       calls.push([path, body])
       return {
-        comparison_id: 'cmp-1',
-        jobs: [
-          { job_id: 'job-1', method: 'dinsql', dataset: 'spider', status: 'running' },
-          { job_id: 'job-2', method: 'c3sql', dataset: 'spider', status: 'running' },
+        experiment_id: 'exp-1',
+        status: 'running',
+        sampling: body.sampling,
+        cells: [
+          { cell_id: 'c1', method: 'dinsql', dataset: 'spider', job_id: 'job-1', status: 'running', progress: {} },
+          { cell_id: 'c2', method: 'c3sql', dataset: 'bird', job_id: null, status: 'queued', queue_position: 1, progress: {} },
         ],
       }
     },
   })
   await userEvent.setup().click(screen.getByRole('button', { name: 'Run config' }))
 
-  assert.equal(calls[0][0], '/api/comparisons')
-  assert.deepEqual(calls[0][1].pairs, [
-    { dataset: 'spider', method: 'dinsql' },
-    { dataset: 'spider', method: 'c3sql' },
-  ])
+  assert.equal(calls[0][0], '/api/experiments')
+  assert.deepEqual(calls[0][1], {
+    cells: [{ dataset: 'spider', method: 'dinsql' }, { dataset: 'bird', method: 'c3sql' }],
+    sampling: { limit: 20, mode: 'slice', seed: 42 },
+  })
+  const monitor = screen.getByTestId('run-batch-monitor').textContent
+  assert.match(monitor, /dinsql \/ spider/)
+  assert.match(monitor, /c3sql \/ bird/)
+  assert.match(monitor, /queued/)
+  assert.deepEqual(experiments, ['exp-1'])
+})
+
+test('jobsFromExperiment keeps live job detail and lists queued cells in order', () => {
+  const experiment = {
+    cells: [
+      { cell_id: 'c1', method: 'dinsql', dataset: 'spider', job_id: 'job-1', status: 'running', progress: { completed: 3 } },
+      { cell_id: 'c2', method: 'c3sql', dataset: 'bird', job_id: null, status: 'queued', queue_position: 2 },
+      { cell_id: 'c3', method: 'finsql', dataset: 'spider', job_id: 'job-3', status: 'failed', error_code: 'evaluation_failed' },
+    ],
+  }
+  const previous = [{ job_id: 'job-1', method: 'dinsql', dataset: 'spider', status: 'running', log: 'tail', resume_count: 1 }]
+  const jobs = jobsFromExperiment(experiment, previous)
+  assert.deepEqual(jobs.map(job => job.job_id), ['job-1', 'queued:c2', 'job-3'])
+  assert.equal(jobs[0].log, 'tail', 'known job detail survives a refresh')
+  assert.equal(jobs[0].resume_count, 1)
+  assert.equal(jobs[1].status, 'queued')
+  assert.equal(jobs[1].queue_position, 2)
+  assert.equal(jobs[2].status, 'failed')
+  assert.equal(jobs[2].error_code, 'evaluation_failed')
+  assert.deepEqual(jobsFromExperiment(null, previous), previous)
 })
 
 test('summarizeRunProgress prefers finished samples and server progress', () => {

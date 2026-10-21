@@ -64,6 +64,41 @@ export const toggleDatabaseConnections = (connections, database) => {
 }
 export const resolveFocusedConfig = (configs, method, database) =>
   (configs || []).find(item => configKey(item.method, item.dataset) === configKey(method, database)) || null
+/** Rows of the Compose experiment grid: which cells have a reproduce config,
+ * which are selected, and the last recorded score keyed by configKey. */
+export const experimentGrid = (configs, connections, scores = new Map()) => {
+  const ready = buildReadyKeys(configs)
+  return METHODS.map(method => ({
+    method,
+    cells: DATABASES.map(database => {
+      const key = configKey(method, database)
+      return {
+        database,
+        key,
+        runnable: ready.has(key),
+        selected: hasConnection(connections, method, database),
+        score: scores.has(key) ? scores.get(key) : null,
+      }
+    }),
+  }))
+}
+
+/** Toggle every runnable cell in one grid row ({ method }) or column ({ database }). */
+export const selectGridLine = (connections, configs, { method, database }) => {
+  const current = connections || []
+  const ready = buildReadyKeys(configs)
+  const line = buildConnections(method ? [method] : METHODS, database ? [database] : DATABASES)
+    .filter(item => ready.has(item.key))
+  if (!line.length) return current
+  const allSelected = line.every(item => hasConnection(current, item.method, item.database))
+  if (allSelected) {
+    const keys = new Set(line.map(item => item.key))
+    const next = current.filter(item => !keys.has(connectionKeyOf(item)))
+    return next.length ? next : current
+  }
+  return line.reduce((next, item) => ensureConnection(next, item.method, item.database), current)
+}
+
 export const workflowStages = config => (config?.stages || []).map(stage => ({
   id: stage.id,
   type: stage.type,

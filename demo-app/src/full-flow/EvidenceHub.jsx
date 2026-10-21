@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import Archive from '../Archive.jsx'
 import ExperimentBoard from '../ExperimentBoard.jsx'
 import { FlowEmpty, FlowPageHeading, FlowStatus } from './flowUi.jsx'
+import ResultsMatrix from './ResultsMatrix.jsx'
 
 export default function EvidenceHub({
   pageId = 'evidence',
@@ -16,6 +17,9 @@ export default function EvidenceHub({
   sampleSeed,
   archiveFocusRunId = '',
   onClearArchiveFocus,
+  configs = [],
+  connections = [],
+  experimentId = '',
   t,
 }) {
   const [expandedRunId, setExpandedRunId] = useState(archiveFocusRunId || '')
@@ -89,6 +93,19 @@ export default function EvidenceHub({
 
       <div className="evidence-hub-body">
         {!expanded ? (
+          <>
+          <ResultsMatrix
+            api={api}
+            configs={configs}
+            connections={connections}
+            experimentId={experimentId}
+            sampleLimit={sampleLimit}
+            sampleMode={sampleMode}
+            sampleSeed={sampleSeed}
+            liveEvaluation={liveEvaluation}
+            onOpenRun={expandRun}
+            t={t}
+          />
           <Archive
             embedded
             mode="browse"
@@ -100,6 +117,7 @@ export default function EvidenceHub({
             onExpandRun={expandRun}
             t={t}
           />
+          </>
         ) : (
           <div className="evidence-run-page" data-testid="evidence-run-page">
             <Archive

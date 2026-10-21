@@ -2447,7 +2447,8 @@ def create_experiment():
         if (code := _cell_preflight(method, dataset, catalog))
     ]
     if rejected:
-        return jsonify({"status": "error", "message": "Some cells cannot run yet.", "cells": rejected}), 400
+        summary = ", ".join(f"{item['method']}/{item['dataset']} ({item['error_code']})" for item in rejected)
+        return jsonify({"status": "error", "message": f"Some cells cannot run yet: {summary}.", "cells": rejected}), 400
     experiment = _experiments.create(cells, sampling)
     _start_experiment_ticker()
     return jsonify(experiment), 202
