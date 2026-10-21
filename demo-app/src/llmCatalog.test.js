@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { OFFICIAL_LLM_MODELS, fetchLiveModels, modelsForProvider, officialModelsFor } from './llmCatalog.js'
+import { OFFICIAL_LLM_MODELS, fetchLiveModels, modelAfterRefresh, modelsForProvider, officialModelsFor } from './llmCatalog.js'
 
 test('bundled catalog covers every configurable provider', () => {
   assert.deepEqual(Object.keys(OFFICIAL_LLM_MODELS).sort(), [
@@ -52,4 +52,11 @@ test('fetchLiveModels omits an empty key so the server can use its own', async (
 test('fetchLiveModels reports a failed request as a fallback without throwing', async () => {
   const live = await fetchLiveModels(async () => { throw new Error('offline') }, { provider: 'openai', apiKey: 'k' })
   assert.deepEqual(live, { provider: 'openai', models: [], source: 'fallback', error: 'offline' })
+})
+
+test('modelAfterRefresh keeps whatever model the user already chose or typed', () => {
+  const live = { source: 'live', models: ['deepseek-flash'] }
+  assert.equal(modelAfterRefresh('my-private-alias', live), 'my-private-alias')
+  assert.equal(modelAfterRefresh('', live), 'deepseek-flash')
+  assert.equal(modelAfterRefresh('', { source: 'fallback', models: [] }), '')
 })

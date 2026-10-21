@@ -854,13 +854,13 @@ def list_llm_models():
         url=f"{base_url}/models" if base_url else None,
         refresh=bool(payload.get("refresh")),
     )
-    models = listing["models"]
-    preferred = model_catalog.DEFAULT_MODELS.get(provider)
+    models = model_catalog.default_first(provider, list(listing["models"]))
     return jsonify({
         "status": "ok",
         "provider": provider,
         **listing,
-        "default_model": preferred if preferred in models else (models[0] if models else ""),
+        "models": models,
+        "default_model": models[0] if models else "",
     })
 
 

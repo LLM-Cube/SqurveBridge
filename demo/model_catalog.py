@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import threading
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
@@ -133,7 +134,7 @@ def read_sdk_models(
     return resolved
 
 
-def _default_first(provider: str, models: list[str]) -> list[str]:
+def default_first(provider: str, models: list[str]) -> list[str]:
     preferred = DEFAULT_MODELS.get(provider)
     if not preferred or preferred not in models:
         return models
@@ -149,7 +150,7 @@ def build_catalog(sdk_models: Mapping[str, Sequence[str]] | None = None) -> dict
             models = list(CURATED_MODELS[provider])
         else:
             models = list(sourced.get(provider) or ()) or list(FALLBACK_SDK_MODELS.get(provider, ()))
-        catalog[provider] = _default_first(provider, models)
+        catalog[provider] = default_first(provider, models)
     return catalog
 
 
@@ -177,15 +178,38 @@ def reset_cache() -> None:
 _LISTING_TIMEOUT_SECONDS = 10.0
 _LISTING_CACHE_TTL_SECONDS = 300.0
 _LISTING_MAX_BYTES = 2_000_000
+LISTING_CACHE_MAX_ENTRIES = 256
 _listing_cache: dict[tuple[str, str, str], tuple[float, list[str]]] = {}
 _listing_lock = threading.Lock()
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse redirects so a provider reply can never forward the key elsewhere."""
+
+    def redirect_request(self, *_args, **_kwargs):
+        return None
+
+
+def listing_opener() -> urllib.request.OpenerDirector:
+    return urllib.request.build_opener(_NoRedirect)
 
 
 def fetch_json(url: str, headers: Mapping[str, str], timeout: float) -> object:
     """GET a provider listing; the seam tests replace with a fake."""
     request = urllib.request.Request(url, headers=dict(headers), method="GET")
-    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - https URLs from the table
+    with listing_opener().open(request, timeout=timeout) as response:
         return json.loads(response.read(_LISTING_MAX_BYTES))
+
+
+def _listing_error_code(error: Exception) -> str:
+    if isinstance(error, urllib.error.HTTPError):
+        if error.code in {401, 403}:
+            return "credential_rejected"
+        if error.code == 429:
+            return "provider_rate_limited"
+    if isinstance(error, TimeoutError) or "timed out" in str(error).lower():
+        return "provider_timeout"
+    return "provider_unreachable"
 
 
 def _bearer(api_key: str) -> dict[str, str]:
@@ -230,7 +254,7 @@ LISTING_SOURCES: Mapping[str, tuple[str, Callable[[str], dict[str, str]], Callab
     "openai": ("https://api.openai.com/v1/models", _bearer, _openai_style_ids),
     "qwen": ("", _bearer, _openai_style_ids),
     "zhipu": ("https://open.bigmodel.cn/api/paas/v4/models", _bearer, _openai_style_ids),
-    "claude": ("https://api.anthropic.com/v1/models", _anthropic_headers, _openai_style_ids),
+    "claude": ("https://api.anthropic.com/v1/models?limit=1000", _anthropic_headers, _openai_style_ids),
     "gemini": (
         "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000",
         _gemini_headers,
@@ -241,6 +265,11 @@ LISTING_SOURCES: Mapping[str, tuple[str, Callable[[str], dict[str, str]], Callab
 
 def _key_fingerprint(api_key: str) -> str:
     return hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:16]
+
+
+def listing_cache_size() -> int:
+    with _listing_lock:
+        return len(_listing_cache)
 
 
 def reset_listing_cache() -> None:
@@ -272,10 +301,13 @@ def list_provider_models(
         return {"models": list(cached[1]), "models_source": "live", "models_error": None}
     try:
         models = list(dict.fromkeys(parse(fetch_json(url, auth(api_key), _LISTING_TIMEOUT_SECONDS))))
-    except Exception:  # noqa: BLE001 - any provider failure degrades to the fallback
-        models = []
+        error = None if models else "empty_listing"
+    except Exception as exc:  # noqa: BLE001 - any provider failure degrades to the fallback
+        models, error = [], _listing_error_code(exc)
     if not models:
-        return {"models": list(fallback), "models_source": "fallback", "models_error": "provider_unreachable"}
+        return {"models": list(fallback), "models_source": "fallback", "models_error": error}
     with _listing_lock:
         _listing_cache[cache_key] = (now, models)
+        while len(_listing_cache) > LISTING_CACHE_MAX_ENTRIES:
+            _listing_cache.pop(next(iter(_listing_cache)))
     return {"models": models, "models_source": "live", "models_error": None}

@@ -6,7 +6,7 @@ import SqlAuthDialog from './SqlAuthDialog.jsx'
 import { deploymentTarget, featureEnabled } from './runtimeMode.js'
 import { detectLocale, translate } from './i18n/index.js'
 import { sanitizeRunError } from './full-flow/RunWorkspace.jsx'
-import { fetchLiveModels, modelsForProvider } from './llmCatalog.js'
+import { fetchLiveModels, modelAfterRefresh, modelsForProvider } from './llmCatalog.js'
 
 const api = async (path, options = {}) => {
   const response = await fetch(path, options)
@@ -89,7 +89,7 @@ function ProviderConfig({
     setBusy(true); setError('')
     const result = await fetchLiveModels(postJson, { provider, apiKey, refresh: true })
     setLive(result)
-    if (result.source === 'live' && result.models.length && !result.models.includes(model)) setModel(result.models[0])
+    setModel(modelAfterRefresh(model, result))
     setBusy(false)
   }
 

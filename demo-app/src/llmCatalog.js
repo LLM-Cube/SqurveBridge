@@ -46,3 +46,9 @@ export async function fetchLiveModels(post, { provider, apiKey = '', endpointId 
     return { provider, models: [], source: 'fallback', error: error?.message || 'Could not list models.' }
   }
 }
+
+/** Never replace a model the user chose or typed; only fill an empty field. */
+export function modelAfterRefresh(current, live) {
+  if (current) return current
+  return live.source === 'live' && live.models.length ? live.models[0] : ''
+}

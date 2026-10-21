@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { fetchLiveModels, modelsForProvider } from './llmCatalog.js'
+import { fetchLiveModels, modelAfterRefresh, modelsForProvider } from './llmCatalog.js'
 
 const jsonOptions = (method, body) => ({
   method,
@@ -58,7 +58,7 @@ export default function SqlAuthDialog({ open, api, status, onStatusChange, onClo
       { provider, apiKey, endpointId, workspaceId, refresh: true },
     )
     setLive(result)
-    if (result.source === 'live' && result.models.length && !result.models.includes(model)) setModel(result.models[0])
+    setModel(modelAfterRefresh(model, result))
     setBusy('')
   }
 

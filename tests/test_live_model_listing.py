@@ -102,7 +102,7 @@ class LiveModelListingTests(unittest.TestCase):
 
     def test_claude_lists_with_anthropic_auth_headers(self):
         fetcher = FakeProviders({
-            "https://api.anthropic.com/v1/models": openai_style("claude-haiku-4-5", "claude-sonnet-4-5"),
+            "https://api.anthropic.com/v1/models?limit=1000": openai_style("claude-haiku-4-5", "claude-sonnet-4-5"),
         })
         response = self.list_models(fetcher, provider="claude")
         self.assertEqual(response.json["models"], ["claude-haiku-4-5", "claude-sonnet-4-5"])
@@ -220,6 +220,52 @@ class LiveModelListingTests(unittest.TestCase):
         provider = next(item for item in response.json["llm_providers"] if item["id"] == "deepseek")
         for field in ("id", "models", "default_model"):
             self.assertIn(field, provider)
+
+    def test_failures_are_reported_with_distinct_codes(self):
+        import urllib.error
+
+        def http_error(code):
+            return urllib.error.HTTPError("https://api.deepseek.com/models", code, "x", {}, None)
+
+        cases = {
+            "credential_rejected": http_error(401),
+            "provider_rate_limited": http_error(429),
+            "provider_timeout": TimeoutError("slow"),
+            "provider_unreachable": OSError("down"),
+            "empty_listing": None,
+        }
+        for code, outcome in cases.items():
+            with self.subTest(code=code):
+                model_catalog.reset_listing_cache()
+                body = openai_style() if outcome is None else outcome
+                response = self.list_models(FakeProviders({"https://api.deepseek.com/models": body}))
+                self.assertEqual(response.json["models_source"], "fallback")
+                self.assertEqual(response.json["models_error"], code)
+
+    def test_default_model_is_listed_first_when_the_provider_still_lists_it(self):
+        fetcher = FakeProviders({
+            "https://api.deepseek.com/models": openai_style("deepseek-v4-pro", "deepseek-v4-flash"),
+        })
+        response = self.list_models(fetcher)
+        self.assertEqual(response.json["models"][0], "deepseek-v4-flash")
+        self.assertEqual(response.json["default_model"], "deepseek-v4-flash")
+
+    def test_claude_listing_asks_for_the_full_page(self):
+        fetcher = FakeProviders({"https://api.anthropic.com/v1/models?limit=1000": openai_style("claude-haiku-4-5")})
+        response = self.list_models(fetcher, provider="claude")
+        self.assertEqual(response.json["models"], ["claude-haiku-4-5"])
+
+    def test_listing_never_follows_redirects(self):
+        import urllib.request
+
+        handlers = [type(h) for h in model_catalog.listing_opener().handlers]
+        self.assertNotIn(urllib.request.HTTPRedirectHandler, handlers)
+
+    def test_listing_cache_is_bounded(self):
+        url = "https://api.deepseek.com/models"
+        for index in range(model_catalog.LISTING_CACHE_MAX_ENTRIES + 20):
+            self.list_models(FakeProviders({url: openai_style("m")}), api_key=f"key-{index}")
+        self.assertLessEqual(model_catalog.listing_cache_size(), model_catalog.LISTING_CACHE_MAX_ENTRIES)
 
 
 if __name__ == "__main__":
