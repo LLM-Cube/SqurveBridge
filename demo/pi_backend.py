@@ -24,6 +24,7 @@ PI_SKILLS = {
 READ_ONLY_TOOLS = ("read", "grep", "find", "ls")
 FULL_TOOLS = ("read", "bash", "edit", "write", "grep", "find", "ls")
 PI_CLIENT_COMMANDS = {
+    "context",
     "auth_start",
     "auth_prompt_response",
     "auth_cancel",
@@ -61,6 +62,7 @@ class PiBackendSettings:
     provider: str | None
     model: str | None
     node_binary: str = "node"
+    api_base: str | None = None
     source_environment: Mapping[str, str] = field(
         default_factory=dict,
         repr=False,
@@ -112,6 +114,8 @@ class PiBackendSettings:
             command.extend(("--provider", self.provider))
         if self.model:
             command.extend(("--model", self.model))
+        if self.api_base:
+            command.extend(("--api-base", self.api_base))
         return command
 
 

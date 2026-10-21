@@ -44,7 +44,7 @@ class FakeSession:
     def send_command(self, command):
         allowed = {
             "auth_start", "auth_prompt_response", "auth_cancel",
-            "model_select", "logout", "prompt", "abort",
+            "model_select", "logout", "prompt", "abort", "context",
         }
         if command.get("type") not in allowed:
             raise ValueError("Unsupported Pi client command")
@@ -263,6 +263,76 @@ class PiApiTests(unittest.TestCase):
         blocked = client.post("/api/agent/sessions", json={})
         self.assertEqual(blocked.status_code, 409)
         self.assertIn("limit", blocked.json["message"])
+
+
+class PiPageContextTests(unittest.TestCase):
+    def make_client(self, environment=None):
+        module = importlib.import_module("demo.pi_api")
+        app = Flask(__name__)
+        registry = module.register_pi_routes(
+            app, FakeSock(), Path("/workspace"), environment=environment or {}, session_factory=FakeSession,
+        )
+        return app.test_client(), registry
+
+    def test_a_session_starts_with_the_page_context_and_knows_the_demo_api(self):
+        client, registry = self.make_client()
+        response = client.post("/api/agent/sessions", json={"context": {
+            "page": "evidence",
+            "experiment_id": "exp-1",
+            "cells": [{"method": "c3sql", "dataset": "spider"}],
+            "focused_cell": {"method": "c3sql", "dataset": "spider"},
+        }})
+        self.assertEqual(response.status_code, 201)
+        session = registry.get(response.json["session_id"])
+        self.assertEqual(session.commands, [{"type": "context", "context": {
+            "page": "evidence",
+            "experiment_id": "exp-1",
+            "cells": [{"method": "c3sql", "dataset": "spider"}],
+            "focused_cell": {"method": "c3sql", "dataset": "spider"},
+        }}])
+        self.assertTrue(session.settings.api_base.startswith("http://127.0.0.1:"))
+
+    def test_context_keeps_only_known_identifier_fields(self):
+        client, registry = self.make_client()
+        response = client.post("/api/agent/sessions", json={"context": {
+            "page": "query",
+            "api_key": "never-forwarded",
+            "experiment_id": "../../etc",
+            "cells": [{"method": "c3sql", "dataset": "spider", "secret": "x"}, {"method": "bad id!", "dataset": "spider"}],
+            "query": {"db_id": "concert_singer", "question": "How many singers?", "method": "c3sql", "sql": "DROP"},
+        }})
+        context = registry.get(response.json["session_id"]).commands[0]["context"]
+        self.assertEqual(context, {
+            "page": "query",
+            "cells": [{"method": "c3sql", "dataset": "spider"}],
+            "query": {"db_id": "concert_singer", "question": "How many singers?", "method": "c3sql"},
+        })
+
+    def test_oversized_context_is_rejected(self):
+        client, _ = self.make_client()
+        response = client.post("/api/agent/sessions", json={"context": {
+            "page": "query", "query": {"question": "x" * 5000},
+        }})
+        self.assertEqual(response.status_code, 400)
+
+    def test_context_sent_over_the_websocket_is_filtered_too(self):
+        sock = FakeSock()
+        module = importlib.import_module("demo.pi_api")
+        app = Flask(__name__)
+        registry = module.register_pi_routes(app, sock, Path("/workspace"), environment={}, session_factory=FakeSession)
+        session_id = app.test_client().post("/api/agent/sessions", json={}).json["session_id"]
+        session = registry.get(session_id)
+        socket = ScriptedWebSocket(['{"type":"context","context":{"page":"compose","api_key":"never"}}'])
+        sock.handlers["/api/agent/sessions/<session_id>/ws"](socket, session_id)
+        self.assertEqual(session.commands[-1], {"type": "context", "context": {"page": "compose"}})
+
+    def test_context_updates_reach_a_running_session(self):
+        client, registry = self.make_client()
+        session_id = client.post("/api/agent/sessions", json={}).json["session_id"]
+        response = client.post(f"/api/agent/sessions/{session_id}/context", json={"context": {"page": "board"}})
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(registry.get(session_id).commands[-1], {"type": "context", "context": {"page": "board"}})
+        self.assertEqual(client.post("/api/agent/sessions/nope/context", json={"context": {}}).status_code, 404)
 
 
 if __name__ == "__main__":

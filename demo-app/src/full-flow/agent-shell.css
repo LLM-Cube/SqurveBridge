@@ -1349,3 +1349,12 @@ body.agent-shell-resizing .agent-shell-divider-ghost {
     animation-iteration-count: 1 !important;
   }
 }
+
+/* Agent proposals: nothing runs until the user confirms. */
+.pi-proposal { display: grid; gap: 6px; margin: 8px 0; border: 1px solid #d9c9a8; border-radius: 10px; padding: 12px; background: #fffaf0; color: #2e2618; }
+.pi-proposal > span { color: #8a5c22; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+.pi-proposal p { margin: 0; color: #6b6152; font-size: 13px; }
+.pi-proposal code { overflow-wrap: anywhere; color: #6b6152; font-size: 11px; }
+.pi-proposal-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.pi-proposal[data-status="dismissed"] { opacity: .6; }
+.pi-proposal small { color: #6b6152; }

@@ -28,7 +28,12 @@ test('parses the embedded Pi bridge configuration', async () => {
       tools: ['read', 'grep'],
       provider: 'deepseek',
       model: 'deepseek-chat',
+      apiBase: null,
     },
+  )
+  assert.equal(
+    parseBridgeArgs(['--cwd', '/w', '--tools', '[]', '--api-base', 'http://127.0.0.1:7861']).apiBase,
+    'http://127.0.0.1:7861',
   )
 })
 
@@ -342,4 +347,112 @@ test('Pi auth protocol logs out and rejects prompts without an authenticated mod
   assert.deepEqual(pi.session.prompts, [])
   assert.equal(events.some(event => event.type === 'auth_error' && event.code === 'auth_required'), true)
   assert.equal(JSON.stringify(events).includes('secret'), false)
+})
+
+
+function fakeFetch(responses) {
+  const calls = []
+  const fetchImpl = async url => {
+    calls.push(String(url))
+    const body = responses[String(url)] ?? { message: 'not found' }
+    return { ok: String(url) in responses, status: String(url) in responses ? 200 : 404, json: async () => body }
+  }
+  return { calls, fetchImpl }
+}
+
+function toolNamed(tools, name) {
+  const tool = tools.find(item => item.name === name)
+  assert.ok(tool, `missing tool ${name}`)
+  return tool
+}
+
+const textOf = result => result.content.map(part => part.text).join('')
+
+test('squrve_results reads the comparison matrix and question diff from the Demo API', async () => {
+  const { createSqurveTools } = await bridgeModule()
+  const base = 'http://127.0.0.1:7861'
+  const matrixUrl = `${base}/api/results/matrix?methods=c3sql%2Cdinsql&datasets=spider&sample_limit=100&sample_mode=random&sample_seed=42`
+  const diffUrl = `${base}/api/results/diff?a=run-a&b=run-b&limit=50`
+  const { calls, fetchImpl } = fakeFetch({
+    [matrixUrl]: { cells: [{ method: 'c3sql', values: { ex: 0.8 } }] },
+    [diffUrl]: { summary: { a_only: 10 } },
+  })
+  const tools = createSqurveTools({ apiBase: base, profile: 'local-full', emit: () => {}, fetchImpl })
+  const results = toolNamed(tools, 'squrve_results')
+  const matrix = await results.execute('t1', {
+    methods: ['c3sql', 'dinsql'], datasets: ['spider'], sample_limit: 100, sample_mode: 'random', sample_seed: 42,
+  })
+  assert.match(textOf(matrix), /"ex":0.8/)
+  const diff = await results.execute('t2', { diff_a: 'run-a', diff_b: 'run-b' })
+  assert.match(textOf(diff), /"a_only":10/)
+  assert.deepEqual(calls, [matrixUrl, diffUrl])
+})
+
+test('squrve_experiment_status reads one experiment or the session list', async () => {
+  const { createSqurveTools } = await bridgeModule()
+  const base = 'http://api'
+  const { calls, fetchImpl } = fakeFetch({
+    [`${base}/api/experiments/exp-1`]: { status: 'running' },
+    [`${base}/api/experiments`]: { experiments: [] },
+  })
+  const status = toolNamed(createSqurveTools({ apiBase: base, profile: 'local-full', emit: () => {}, fetchImpl }), 'squrve_experiment_status')
+  assert.match(textOf(await status.execute('t', { experiment_id: 'exp-1' })), /running/)
+  assert.match(textOf(await status.execute('t', {})), /experiments/)
+  assert.deepEqual(calls, [`${base}/api/experiments/exp-1`, `${base}/api/experiments`])
+  const bad = await status.execute('t', { experiment_id: '../etc' })
+  assert.match(textOf(bad), /invalid/i)
+  assert.equal(calls.length, 2, 'unsafe ids never reach the API')
+})
+
+test('squrve_propose_action only emits a proposal for the user to confirm', async () => {
+  const { createSqurveTools } = await bridgeModule()
+  const events = []
+  const propose = toolNamed(
+    createSqurveTools({ apiBase: 'http://api', profile: 'local-full', emit: event => events.push(event), fetchImpl: async () => assert.fail('no API call') }),
+    'squrve_propose_action',
+  )
+  const result = await propose.execute('call-1', {
+    action: 'start_experiment',
+    args: { cells: [{ method: 'c3sql', dataset: 'spider' }], sampling: { limit: 20, mode: 'slice', seed: 42 } },
+    reason: 'Compare on Spider',
+  })
+  assert.equal(events.length, 1)
+  assert.equal(events[0].type, 'ui_action')
+  assert.equal(events[0].action, 'start_experiment')
+  assert.equal(events[0].reason, 'Compare on Spider')
+  assert.ok(events[0].id)
+  assert.match(textOf(result), /confirm/i)
+  const unknown = await propose.execute('call-2', { action: 'delete_everything', args: {} })
+  assert.match(textOf(unknown), /not allowed/i)
+  assert.equal(events.length, 1)
+})
+
+test('the public Space may only propose actions that open views', async () => {
+  const { createSqurveTools } = await bridgeModule()
+  const events = []
+  const tools = createSqurveTools({ apiBase: 'http://api', profile: 'hosted-readonly', emit: event => events.push(event), fetchImpl: async () => ({}) })
+  const propose = toolNamed(tools, 'squrve_propose_action')
+  assert.match(textOf(await propose.execute('c', { action: 'start_experiment', args: {} })), /not allowed/i)
+  await propose.execute('c', { action: 'open_cell', args: { method: 'c3sql', dataset: 'spider' } })
+  assert.deepEqual(events.map(event => event.action), ['open_cell'])
+  assert.equal(tools.some(tool => tool.name === 'squrve_experiment_status'), false, 'the Space has no experiments')
+})
+
+test('page context rides along with each prompt and never hides a skill command', async () => {
+  const { createPiAuthProtocol } = await bridgeModule()
+  const prompts = []
+  const model = { provider: 'deepseek', id: 'deepseek-flash' }
+  const protocol = createPiAuthProtocol({
+    modelRuntime: { listCredentials: async () => [], getProvider: () => null },
+    modelRegistry: { getAll: () => [model], hasConfiguredAuth: () => true, getProviderDisplayName: id => id, getProviderAuthStatus: () => ({ configured: true }) },
+    session: { prompt: async message => prompts.push(message) },
+    emit: () => {},
+    initialModel: model,
+  })
+  await protocol.handle({ type: 'prompt', message: 'hello' })
+  await protocol.handle({ type: 'context', context: { page: 'evidence', experiment_id: 'exp-1' } })
+  await protocol.handle({ type: 'prompt', message: '/skill:run spider c3sql' })
+  assert.equal(prompts[0], 'hello')
+  assert.ok(prompts[1].startsWith('/skill:run spider c3sql'))
+  assert.match(prompts[1], /<squrve-page-context>[\s\S]*"experiment_id":"exp-1"[\s\S]*<\/squrve-page-context>/)
 })

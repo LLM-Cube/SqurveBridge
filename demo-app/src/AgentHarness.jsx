@@ -1,6 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import PiAuthDialog from './PiAuthDialog.jsx'
-import { appendUserMessage, applyPiEvent, createPiChatState, skillPrompt } from './piChat.js'
+import { appendUserMessage, applyPiEvent, createPiChatState, resolveProposal, skillPrompt } from './piChat.js'
 import { applyPiAuthEvent, createPiAuthState } from './piAuth.js'
 import { extractSqlSegments } from './full-flow/queryModel.js'
 
@@ -51,14 +51,14 @@ const LOCAL_SUGGESTIONS = [
 const LOCAL_EMPTY_CARDS = [
   { id: 'inspect', titleKey: 'agent.card.inspect', prompt: 'Inspect the current SqurveBridge integration and point out anything that needs attention.' },
   { id: 'integrate', titleKey: 'agent.card.integrate', prompt: 'Help me integrate a new Text-to-SQL method from a public GitHub repository.' },
-  { id: 'reproduce', titleKey: 'agent.card.reproduce', prompt: 'Reproduce one experiment from the reproduce catalog and walk me through the run.' },
-  { id: 'evaluate', titleKey: 'agent.card.evaluate', prompt: 'Run an evaluation, compare two methods, and summarize the differences.' },
+  { id: 'reproduce', titleKey: 'agent.card.reproduce', prompt: 'Propose an experiment for the cells I selected in Compose with squrve_propose_action (start_experiment, 20 samples, slice). I will confirm it in the UI.' },
+  { id: 'evaluate', titleKey: 'agent.card.evaluate', prompt: 'Read the comparison for the methods and benchmarks on this page with squrve_results, then explain which method does best where, the accuracy vs latency trade-offs, and which cells are missing or unaligned.' },
 ]
 
 const HOSTED_EMPTY_CARDS = [
   { id: 'inspect', titleKey: 'agent.card.hostedExplain', prompt: HOSTED_SUGGESTIONS[0].prompt },
   { id: 'reproduce', titleKey: 'agent.card.hostedConfig', prompt: HOSTED_SUGGESTIONS[1].prompt },
-  { id: 'evaluate', titleKey: 'agent.card.hostedEvidence', prompt: HOSTED_SUGGESTIONS[2].prompt },
+  { id: 'evaluate', titleKey: 'agent.card.hostedEvidence', prompt: 'Read the recorded evidence with squrve_results (c3sql, dinsql, finsql on spider; 100 random samples, seed 42) and explain how the methods compare, including the questions only one of them gets right.' },
 ]
 
 const FALLBACK = {
@@ -216,9 +216,12 @@ function AgentHarness({
   autoOpenAuth = false,
   onRequestNewChat,
   onAdoptSql,
+  pageContext = null,
+  onAgentAction,
   t,
 }) {
   const socketRef = useRef(null)
+  const pageContextRef = useRef(pageContext)
   const sessionRef = useRef(null)
   const handledCommandRef = useRef('')
   const autoAuthStartedRef = useRef(false)
@@ -282,13 +285,33 @@ function AgentHarness({
     if (sessionRef.current?.running && socketRef.current?.readyState === WebSocket.OPEN) return sessionRef.current
     setChat(current => ({ ...current, status: 'starting', error: '' }))
     try {
-      const session = await postJson('/api/agent/sessions', {})
+      const session = await postJson('/api/agent/sessions', pageContextRef.current ? { context: pageContextRef.current } : {})
       sessionRef.current = session
       await connect(session)
       return session
     } catch (error) {
       setChat(current => ({ ...current, status: 'error', error: error.message }))
       return null
+    }
+  }
+
+  // Keep the Agent's view of the page current: the next session starts with it,
+  // and a live session hears about every change.
+  useEffect(() => {
+    pageContextRef.current = pageContext
+    const socket = socketRef.current
+    if (pageContext && socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: 'context', context: pageContext }))
+    }
+  }, [JSON.stringify(pageContext)])
+
+  const confirmProposal = async proposal => {
+    setChat(current => resolveProposal(current, proposal.id, 'running'))
+    try {
+      await onAgentAction?.(proposal)
+      setChat(current => resolveProposal(current, proposal.id, 'confirmed'))
+    } catch (error) {
+      setChat(current => ({ ...resolveProposal(current, proposal.id, 'failed'), error: error.message || '' }))
     }
   }
 
@@ -616,6 +639,26 @@ function AgentHarness({
       ))}
       {chat.tools.slice(-8).map(tool => (
         <ToolActivity key={tool.id} tool={tool} Status={Status} t={t} />
+      ))}
+      {(chat.proposals || []).map(proposal => (
+        <div key={proposal.id} className="pi-proposal" data-status={proposal.status} data-testid="agent-proposal">
+          <span>{label(t, 'agent.proposalEyebrow')}</span>
+          <strong>{label(t, `agent.action.${proposal.action}`)}</strong>
+          {proposal.reason && <p>{proposal.reason}</p>}
+          <code>{JSON.stringify(proposal.args)}</code>
+          {proposal.status === 'pending' ? (
+            <div className="pi-proposal-actions">
+              <button type="button" className="button primary" onClick={() => confirmProposal(proposal)}>
+                {label(t, 'agent.proposalConfirm')}
+              </button>
+              <button type="button" className="button secondary" onClick={() => setChat(current => resolveProposal(current, proposal.id, 'dismissed'))}>
+                {label(t, 'agent.proposalDismiss')}
+              </button>
+            </div>
+          ) : (
+            <small>{label(t, `agent.proposal.${proposal.status}`)}</small>
+          )}
+        </div>
       ))}
       <div ref={endRef} />
     </div>

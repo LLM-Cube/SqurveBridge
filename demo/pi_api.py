@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
+import re
 import shutil
 import threading
 from pathlib import Path
@@ -40,6 +42,53 @@ class PiSessionRegistry:
         if session is not None and stop:
             session.stop()
         return session
+
+
+_CONTEXT_LIMIT = 4096
+_CONTEXT_ID = re.compile(r"[A-Za-z0-9._-]{1,128}")
+_CONTEXT_PAGES = {"configure", "compose", "query", "board", "evidence"}
+
+
+def _context_cell(value) -> dict | None:
+    if not isinstance(value, dict):
+        return None
+    method, dataset = str(value.get("method") or ""), str(value.get("dataset") or "")
+    if _CONTEXT_ID.fullmatch(method) and _CONTEXT_ID.fullmatch(dataset):
+        return {"method": method, "dataset": dataset}
+    return None
+
+
+def sanitize_page_context(value) -> dict:
+    """Keep only identifier fields of the Demo page context; never keys or file contents.
+
+    Raises ValueError when the result would exceed the context size limit.
+    """
+    if not isinstance(value, dict):
+        return {}
+    context: dict = {}
+    if value.get("page") in _CONTEXT_PAGES:
+        context["page"] = value["page"]
+    if _CONTEXT_ID.fullmatch(str(value.get("experiment_id") or "")):
+        context["experiment_id"] = value["experiment_id"]
+    cells = [cell for cell in map(_context_cell, value.get("cells") or []) if cell][:24]
+    if cells:
+        context["cells"] = cells
+    focused = _context_cell(value.get("focused_cell"))
+    if focused:
+        context["focused_cell"] = focused
+    query = value.get("query")
+    if isinstance(query, dict):
+        public_query = {
+            key: str(query[key]) for key in ("db_id", "method", "dataset")
+            if _CONTEXT_ID.fullmatch(str(query.get(key) or ""))
+        }
+        if isinstance(query.get("question"), str) and query["question"].strip():
+            public_query["question"] = query["question"].strip()
+        if public_query:
+            context["query"] = public_query
+    if len(json.dumps(context, ensure_ascii=False)) > _CONTEXT_LIMIT:
+        raise ValueError(f"Page context must stay under {_CONTEXT_LIMIT} characters")
+    return context
 
 
 _SDK_ENTRY = Path("demo/node_modules/@earendil-works/pi-coding-agent/dist/index.js")
@@ -102,7 +151,15 @@ def register_pi_routes(
 
     @app.post("/api/agent/sessions")
     def start_pi_agent_session():
-        current = settings()
+        try:
+            context = sanitize_page_context((request.get_json(silent=True) or {}).get("context"))
+        except ValueError as exc:
+            return jsonify({"status": "error", "message": str(exc)}), 400
+        # The Agent's Demo tools call this same server over loopback, never the public host.
+        current = dataclasses.replace(
+            settings(),
+            api_base=f"http://127.0.0.1:{request.environ.get('SERVER_PORT') or '80'}",
+        )
         if session_factory is PiAgentSession:
             reason = unavailable_reason(current)
             if reason is not None:
@@ -111,7 +168,26 @@ def register_pi_routes(
             session = registry.create(current, session_factory)
         except RuntimeError as exc:
             return jsonify({"status": "error", "message": str(exc)}), 409
+        if context:
+            try:
+                session.send_command({"type": "context", "context": context})
+            except (RuntimeError, ValueError):
+                pass
         return jsonify(session.public_state()), 201
+
+    @app.post("/api/agent/sessions/<session_id>/context")
+    def update_pi_agent_context(session_id: str):
+        session, error = find_session(session_id)
+        if error:
+            return error
+        try:
+            context = sanitize_page_context((request.get_json(silent=True) or {}).get("context"))
+            session.send_command({"type": "context", "context": context})
+        except ValueError as exc:
+            return jsonify({"status": "error", "message": str(exc)}), 400
+        except RuntimeError as exc:
+            return jsonify({"status": "error", "message": str(exc)}), 409
+        return jsonify({"status": "accepted"}), 202
 
     @app.post("/api/agent/sessions/<session_id>/messages")
     def send_pi_agent_message(session_id: str):
@@ -168,6 +244,8 @@ def register_pi_routes(
                         command = json.loads(raw)
                         if not isinstance(command, dict):
                             raise ValueError("Pi client commands must be JSON objects")
+                        if command.get("type") == "context":
+                            command = {"type": "context", "context": sanitize_page_context(command.get("context"))}
                         session.send_command(command)
                     except (ValueError, RuntimeError, json.JSONDecodeError) as exc:
                         ws.send(json.dumps({"type": "command_error", "message": str(exc)}))

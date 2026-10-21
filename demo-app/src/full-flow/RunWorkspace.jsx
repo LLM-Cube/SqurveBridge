@@ -376,6 +376,7 @@ export default function RunWorkspace({
   api,
   onRunStateChange,
   onExperimentChange,
+  adoptExperimentId = '',
   liveEvaluation = false,
   t,
 }) {
@@ -470,6 +471,21 @@ export default function RunWorkspace({
     }).catch(() => {})
     return () => { active = false }
   }, [api])
+
+  // An experiment started elsewhere (the Agent, after the user confirmed) is shown here too.
+  useEffect(() => {
+    if (!api || !adoptExperimentId || experiment?.experiment_id === adoptExperimentId) return undefined
+    let active = true
+    api(`/api/experiments/${adoptExperimentId}`).then(latest => {
+      if (!active || !latest?.cells) return
+      const adopted = jobsFromExperiment(latest, [])
+      setExperiment(latest)
+      setJobs(adopted)
+      setSelectedJobId(adopted[0]?.job_id || '')
+      publishRunState(phaseFromJobs(adopted))
+    }).catch(() => {})
+    return () => { active = false }
+  }, [api, adoptExperimentId])
 
   useEffect(() => {
     if (!jobs.some(isActiveJob) || !api) return undefined

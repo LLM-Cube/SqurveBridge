@@ -7,6 +7,7 @@ export const createPiChatState = () => ({
   provider: '',
   model: '',
   error: '',
+  proposals: [],
 })
 
 const finishStreamingMessage = messages => messages.map((message, index) => (
@@ -64,6 +65,18 @@ export function applyPiEvent(state, event) {
   }
   if (event.type === 'aborted') return { ...state, status: 'ready', messages: finishStreamingMessage(state.messages) }
   if (event.type === 'exit') return { ...state, status: 'stopped', messages: finishStreamingMessage(state.messages) }
+  if (event.type === 'ui_action') {
+    return {
+      ...state,
+      proposals: [...(state.proposals || []), {
+        id: event.id,
+        action: event.action,
+        args: event.args || {},
+        reason: event.reason || null,
+        status: 'pending',
+      }],
+    }
+  }
   if (event.type === 'bridge_error' || event.type === 'command_error') {
     return { ...state, status: 'error', error: event.message || 'Pi agent failed.' }
   }
@@ -76,3 +89,12 @@ export const appendUserMessage = (state, content) => ({
 })
 
 export const skillPrompt = (name, args = '') => `/skill:${name}${args ? ` ${args}` : ''}`
+
+/** Mark an Agent proposal confirmed or dismissed; unknown ids leave state unchanged. */
+export function resolveProposal(state, id, status) {
+  if (!(state.proposals || []).some(proposal => proposal.id === id)) return state
+  return {
+    ...state,
+    proposals: state.proposals.map(proposal => (proposal.id === id ? { ...proposal, status } : proposal)),
+  }
+}

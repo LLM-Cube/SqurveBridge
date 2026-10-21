@@ -20,6 +20,7 @@ import {
 import { PROCESS_STEPS, resolveProcessStep } from './processSteps.js'
 import { INITIAL_RUN_STATE } from './RunWorkspace.jsx'
 import { displayNamesFor } from './resultsModel.js'
+import { normalizeProposal, pageContextFor } from '../agentActions.js'
 import { FlowStatus } from './flowUi.jsx'
 import './full-flow.css'
 import './agent-shell.css'
@@ -79,6 +80,7 @@ export default function FullFlowDemo({
   const [runState, setRunState] = useState(INITIAL_RUN_STATE)
   const [experimentId, setExperimentId] = useState('')
   const [queryPrefill, setQueryPrefill] = useState(null)
+  const [adoptedExperimentId, setAdoptedExperimentId] = useState('')
   const [chatKey, setChatKey] = useState(0)
   const [harnessTask, setHarnessTask] = useState(null)
   const [shellLayout, setShellLayout] = useState(loadShellLayout)
@@ -187,6 +189,37 @@ export default function FullFlowDemo({
     navigateToStep('query')
     setMobilePane('dashboard')
   }, [onFocusConnection, navigateToStep])
+
+  const agentPageContext = useMemo(() => pageContextFor({
+    activeStep, experimentId, connections, configs, focusedMethod, focusedDatabase,
+  }), [activeStep, experimentId, connections, configs, focusedMethod, focusedDatabase])
+
+  // Runs an Agent proposal the user has just confirmed; anything the page does
+  // not recognise, or that the deployment does not allow, is refused here.
+  const runAgentAction = useCallback(async proposal => {
+    const safe = normalizeProposal(proposal, { hosted: credentialMode !== 'local' })
+    if (!safe) throw new Error(t('agent.proposalRejected'))
+    const { action, args } = safe
+    if (action === 'start_experiment') {
+      const created = await postJson('/api/experiments', args)
+      setExperimentId(created.experiment_id)
+      setAdoptedExperimentId(created.experiment_id)
+      navigateToStep('board')
+      return
+    }
+    if (action === 'open_experiment') {
+      setExperimentId(args.experiment_id)
+      navigateToStep('evidence')
+      return
+    }
+    if (action === 'open_cell') {
+      const names = displayNamesFor(args.method, args.dataset)
+      if (names) onFocusConnection(names.method, names.database)
+      navigateToStep('evidence')
+      return
+    }
+    replayInQuery(args)
+  }, [credentialMode, postJson, navigateToStep, onFocusConnection, replayInQuery, t])
 
   const adoptSqlFromAgent = useCallback(sql => {
     setAdoptedSql({ id: Date.now(), sql })
@@ -303,6 +336,7 @@ export default function FullFlowDemo({
         api={api}
         onRunStateChange={onRunStateChange}
         onExperimentChange={setExperimentId}
+        adoptExperimentId={adoptedExperimentId}
         liveEvaluation={Boolean(capabilities?.deployment?.features?.live_evaluation)}
         t={t}
       />
@@ -585,6 +619,8 @@ export default function FullFlowDemo({
                   onQueuedCommandSent={onQueuedCommandSent}
                   onRequestNewChat={onRequestNewChat}
                   onAdoptSql={adoptSqlFromAgent}
+                  pageContext={agentPageContext}
+                  onAgentAction={runAgentAction}
                 />
               </Suspense>
             ) : (
