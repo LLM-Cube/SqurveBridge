@@ -22,7 +22,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Callable, Mapping, Sequence
+from typing import Callable, Mapping, NamedTuple, Sequence
 
 # Demo provider id → Pi SDK provider id, for providers that share an endpoint.
 SDK_PROVIDER_IDS: Mapping[str, str] = {
@@ -247,15 +247,21 @@ def _gemini_ids(payload: object) -> list[str]:
     return ids
 
 
-# provider → (listing URL, auth headers, response parser). Qwen's URL depends on
-# the selected region, so callers pass `url=` for it.
-LISTING_SOURCES: Mapping[str, tuple[str, Callable[[str], dict[str, str]], Callable[[object], list[str]]]] = {
-    "deepseek": ("https://api.deepseek.com/models", _bearer, _openai_style_ids),
-    "openai": ("https://api.openai.com/v1/models", _bearer, _openai_style_ids),
-    "qwen": ("", _bearer, _openai_style_ids),
-    "zhipu": ("https://open.bigmodel.cn/api/paas/v4/models", _bearer, _openai_style_ids),
-    "claude": ("https://api.anthropic.com/v1/models?limit=1000", _anthropic_headers, _openai_style_ids),
-    "gemini": (
+class ListingSource(NamedTuple):
+    url: str
+    auth_headers: Callable[[str], dict[str, str]]
+    parse: Callable[[object], list[str]]
+
+
+# Provider → listing source. Qwen's URL depends on the selected region, so
+# callers pass `url=` for it.
+LISTING_SOURCES: Mapping[str, ListingSource] = {
+    "deepseek": ListingSource("https://api.deepseek.com/models", _bearer, _openai_style_ids),
+    "openai": ListingSource("https://api.openai.com/v1/models", _bearer, _openai_style_ids),
+    "qwen": ListingSource("", _bearer, _openai_style_ids),
+    "zhipu": ListingSource("https://open.bigmodel.cn/api/paas/v4/models", _bearer, _openai_style_ids),
+    "claude": ListingSource("https://api.anthropic.com/v1/models?limit=1000", _anthropic_headers, _openai_style_ids),
+    "gemini": ListingSource(
         "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000",
         _gemini_headers,
         _gemini_ids,
@@ -289,8 +295,7 @@ def list_provider_models(
     source = LISTING_SOURCES.get(provider)
     if source is None:
         return {"models": list(fallback), "models_source": "fallback", "models_error": "listing_unsupported"}
-    default_url, auth, parse = source
-    url = url or default_url
+    url = url or source.url
     if not url:
         return {"models": list(fallback), "models_source": "fallback", "models_error": "listing_unsupported"}
     cache_key = (provider, url, _key_fingerprint(api_key))
@@ -300,7 +305,7 @@ def list_provider_models(
     if cached and not refresh and now - cached[0] < _LISTING_CACHE_TTL_SECONDS:
         return {"models": list(cached[1]), "models_source": "live", "models_error": None}
     try:
-        models = list(dict.fromkeys(parse(fetch_json(url, auth(api_key), _LISTING_TIMEOUT_SECONDS))))
+        models = list(dict.fromkeys(source.parse(fetch_json(url, source.auth_headers(api_key), _LISTING_TIMEOUT_SECONDS))))
         error = None if models else "empty_listing"
     except Exception as exc:  # noqa: BLE001 - any provider failure degrades to the fallback
         models, error = [], _listing_error_code(exc)

@@ -229,6 +229,7 @@ def _sql_provider_catalog() -> list[dict[str, object]]:
             "id": provider,
             "models": list(models),
             "default_model": models[0],
+            "models_source": "catalog",
         }
         if provider == "qwen":
             item["endpoints"] = [
@@ -690,6 +691,7 @@ def _llm_provider_catalog() -> list[dict]:
             "configured": bool(resolve_api_key(provider, None)),
             "models": models,
             "default_model": active_model if active_model in models else models[0],
+            "models_source": "catalog",
             "env_var": PROVIDER_ENV_VARS[provider],
         })
     return catalog
@@ -817,6 +819,31 @@ def _listing_rate_allowed(identity: str) -> bool:
     return allowed
 
 
+def _listing_credential(
+    payload: dict,
+    provider: str,
+    hosted: bool,
+    session_id: str | None,
+) -> tuple[SqlCredential, str | None]:
+    """Resolve the key a model listing should use: request, then session, then local env.
+
+    Hosted deployments never read the server environment. The credential checks
+    are reused so endpoint and workspace IDs are validated exactly as when
+    saving; the model field is a placeholder.
+    """
+    api_key = payload.get("api_key")
+    saved_base_url = None
+    if not (isinstance(api_key, str) and api_key.strip()):
+        saved = _sql_credentials.get(session_id or "") if hosted else None
+        if saved is not None and saved.provider == provider:
+            api_key, saved_base_url = saved.api_key, saved.base_url
+        elif not hosted:
+            load_dotenv(_project_root / ".env")
+            api_key = resolve_api_key(provider, None)
+    credential = _credential_from_payload({**payload, "api_key": api_key, "model": "listing"})
+    return credential, saved_base_url or credential.base_url
+
+
 @app.post("/api/llm/models")
 def list_llm_models():
     origin_error = _same_origin_error()
@@ -830,22 +857,10 @@ def list_llm_models():
     session_id, _ = _browser_session(create=False)
     if hosted and not _listing_rate_allowed(session_id or request.remote_addr or "anonymous"):
         return _json_error("Too many model refreshes; retry shortly.", 429)
-    api_key = payload.get("api_key")
-    session_base_url = None
-    if not (isinstance(api_key, str) and api_key.strip()):
-        saved = _sql_credentials.get(session_id or "") if hosted else None
-        if saved is not None and saved.provider == provider:
-            api_key, session_base_url = saved.api_key, saved.base_url
-        elif not hosted:
-            load_dotenv(_project_root / ".env")
-            api_key = resolve_api_key(provider, None)
     try:
-        # Reuses the SQL credential checks so endpoint and workspace IDs are
-        # validated exactly as they are when saving; the model is a placeholder.
-        credential = _credential_from_payload({**payload, "api_key": api_key, "model": "listing"})
+        credential, base_url = _listing_credential(payload, provider, hosted, session_id)
     except SqlAuthError as exc:
         return _json_error(f"Invalid request: {exc.code}.")
-    base_url = session_base_url or credential.base_url
     fallback = _provider_model_ids().get(provider) or []
     listing = model_catalog.list_provider_models(
         provider,

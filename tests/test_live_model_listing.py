@@ -220,6 +220,12 @@ class LiveModelListingTests(unittest.TestCase):
         provider = next(item for item in response.json["llm_providers"] if item["id"] == "deepseek")
         for field in ("id", "models", "default_model"):
             self.assertIn(field, provider)
+        self.assertEqual(provider["models_source"], "catalog")
+
+    def test_hosted_capabilities_also_mark_the_built_in_list(self):
+        with patch.dict(os.environ, {"SQURVE_DEPLOYMENT_TARGET": "hf-space"}, clear=False):
+            response = self.client.get("/api/sql-auth")
+        self.assertTrue(all(item["models_source"] == "catalog" for item in response.json["providers"]))
 
     def test_failures_are_reported_with_distinct_codes(self):
         import urllib.error

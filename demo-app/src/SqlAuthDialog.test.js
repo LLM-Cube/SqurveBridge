@@ -198,3 +198,50 @@ test('sends a workspace id instead of accepting a custom Qwen base URL', async (
   assert.equal(payload.workspace_id, 'llm-valid-123')
   assert.equal(Object.hasOwn(payload, 'base_url'), false)
 })
+
+test('refreshes the live model list, labels its source, and keeps a typed model', async () => {
+  const SqlAuthDialog = await loadDialog()
+  const calls = []
+  const api = async (path, options = {}) => {
+    calls.push({ path, body: JSON.parse(options.body) })
+    return { status: 'ok', models: ['deepseek-flash', 'deepseek-v4-pro'], models_source: 'live', models_error: null }
+  }
+  const user = userEvent.setup()
+  render(React.createElement(SqlAuthDialog, {
+    open: true,
+    api,
+    status: { configured: false, providers },
+    onStatusChange: () => {},
+    onClose: () => {},
+  }))
+
+  await user.selectOptions(screen.getByLabelText('Provider'), 'deepseek')
+  assert.match(document.body.textContent, /Built-in list/)
+  await user.clear(screen.getByLabelText('Model'))
+  await user.type(screen.getByLabelText('Model'), 'my-private-alias')
+  await user.type(screen.getByLabelText('API key'), 'listing-secret')
+  await user.click(screen.getByRole('button', { name: 'Refresh models' }))
+
+  assert.equal(calls[0].path, '/api/llm/models')
+  assert.equal(calls[0].body.provider, 'deepseek')
+  assert.equal(calls[0].body.api_key, 'listing-secret')
+  assert.match(document.body.textContent, /Live list from provider/)
+  assert.ok(screen.getByRole('button', { name: 'deepseek-v4-pro' }))
+  assert.equal(screen.getByLabelText('Model').value, 'my-private-alias')
+})
+
+test('shows why the live list fell back and an empty-state hint without any model', async () => {
+  const SqlAuthDialog = await loadDialog()
+  const api = async () => ({ status: 'ok', models: [], models_source: 'fallback', models_error: 'credential_rejected' })
+  const user = userEvent.setup()
+  render(React.createElement(SqlAuthDialog, {
+    open: true,
+    api,
+    status: { configured: false, providers: [{ id: 'unlisted', models: [], default_model: '' }] },
+    onStatusChange: () => {},
+    onClose: () => {},
+  }))
+  await user.click(screen.getByRole('button', { name: 'Refresh models' }))
+  assert.match(document.body.textContent, /credential_rejected/)
+  assert.match(document.body.textContent, /No models listed/)
+})

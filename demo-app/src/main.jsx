@@ -6,7 +6,9 @@ import SqlAuthDialog from './SqlAuthDialog.jsx'
 import { deploymentTarget, featureEnabled } from './runtimeMode.js'
 import { detectLocale, translate } from './i18n/index.js'
 import { sanitizeRunError } from './full-flow/RunWorkspace.jsx'
-import { fetchLiveModels, modelAfterRefresh, modelsForProvider } from './llmCatalog.js'
+import { modelsForProvider } from './llmCatalog.js'
+import ModelSourceRow from './ModelSourceRow.jsx'
+import { useLiveModels } from './useLiveModels.js'
 
 const api = async (path, options = {}) => {
   const response = await fetch(path, options)
@@ -45,11 +47,11 @@ function ProviderConfig({
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
-  const [live, setLive] = useState(null)
+  const liveModels = useLiveModels(postJson)
   const panelRef = useRef(null)
   const selected = providers.find(item => item.id === provider)
-  const liveActive = live?.provider === provider && live.source === 'live' && live.models.length > 0
-  const catalogModels = liveActive ? live.models : modelsForProvider(selected, provider)
+  const source = liveModels.forProvider(provider, modelsForProvider(selected, provider))
+  const catalogModels = source.models
 
   useEffect(() => {
     const current = health?.provider?.provider
@@ -82,15 +84,12 @@ function ProviderConfig({
     setModel(preferred || catalog?.default_model || '')
     setMessage('')
     setError('')
-    setLive(null)
+    liveModels.reset()
   }
 
   const refreshModels = async () => {
-    setBusy(true); setError('')
-    const result = await fetchLiveModels(postJson, { provider, apiKey, refresh: true })
-    setLive(result)
-    setModel(modelAfterRefresh(model, result))
-    setBusy(false)
+    setError('')
+    setModel(await liveModels.refresh({ provider, apiKey }, model))
   }
 
   const close = () => {
@@ -148,10 +147,7 @@ function ProviderConfig({
       <datalist id="local-model-catalog">
         {catalogModels.map(item => <option key={item} value={item} />)}
       </datalist>
-      <div className="model-source-row">
-        <button className="button secondary" type="button" disabled={busy || !provider} onClick={refreshModels}>Refresh models</button>
-        <small className="model-source-badge" data-source={liveActive ? 'live' : 'catalog'}>{liveActive ? 'Live list from provider' : 'Built-in list'}{live?.provider === provider && live.error ? ` · ${live.error}` : ''}</small>
-      </div>
+      <ModelSourceRow active={source.active} error={source.error} empty={catalogModels.length === 0} refreshing={liveModels.refreshing} disabled={busy || !provider} onRefresh={refreshModels} />
       <small>Pick a model above, or type any model ID this provider supports. Uses the key above, or the saved one.</small>
     </div>
     <label className="field"><span>API key{selected?.env_var ? ` · ${selected.env_var}` : ''}</span><input type="password" aria-label={selected?.env_var ? `API key · ${selected.env_var}` : 'API key'} autoComplete="off" spellCheck="false" value={apiKey} onChange={event => setApiKey(event.target.value)} placeholder={selected?.configured ? 'Leave blank to keep current key' : 'Paste API key'} /></label>
