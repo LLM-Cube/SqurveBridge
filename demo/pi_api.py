@@ -42,6 +42,15 @@ class PiSessionRegistry:
         return session
 
 
+_SDK_ENTRY = Path("demo/node_modules/@earendil-works/pi-coding-agent/dist/index.js")
+_BRIDGE_SCRIPT = Path("demo/pi_agent_bridge.mjs")
+_UNAVAILABLE_MESSAGES = {
+    "node_missing": "Node.js is required for the Pi backend",
+    "sdk_missing": "The embedded Pi SDK is not installed",
+    "bridge_missing": "The Pi bridge script is missing",
+}
+
+
 def register_pi_routes(
     app,
     sock,
@@ -59,6 +68,16 @@ def register_pi_routes(
     def settings() -> PiBackendSettings:
         return PiBackendSettings.from_environment(values(), root)
 
+    def unavailable_reason(current: PiBackendSettings) -> str | None:
+        """Why the embedded Pi agent cannot start here, or None when it can."""
+        if not shutil.which(current.node_binary):
+            return "node_missing"
+        if not (root / _SDK_ENTRY).is_file():
+            return "sdk_missing"
+        if not (root / _BRIDGE_SCRIPT).is_file():
+            return "bridge_missing"
+        return None
+
     def find_session(session_id: str):
         session = registry.get(session_id)
         if session is None:
@@ -68,10 +87,11 @@ def register_pi_routes(
     @app.get("/api/agent")
     def pi_agent_catalog():
         current = settings()
-        built_entry = root / "pi" / "packages" / "coding-agent" / "dist" / "index.js"
+        reason = unavailable_reason(current)
         return jsonify({
             "enabled": True,
-            "available": bool(shutil.which(current.node_binary)) and built_entry.is_file(),
+            "available": reason is None,
+            "unavailable_reason": reason,
             "backend": "pi",
             "profile": current.profile,
             "provider": current.provider,
@@ -84,19 +104,9 @@ def register_pi_routes(
     def start_pi_agent_session():
         current = settings()
         if session_factory is PiAgentSession:
-            sdk_entry = (
-                root
-                / "demo"
-                / "node_modules"
-                / "@earendil-works"
-                / "pi-coding-agent"
-                / "dist"
-                / "index.js"
-            )
-            if not shutil.which(current.node_binary):
-                return jsonify({"status": "error", "message": "Node.js is required for the Pi backend"}), 503
-            if not sdk_entry.is_file():
-                return jsonify({"status": "error", "message": "The embedded Pi SDK is not installed"}), 503
+            reason = unavailable_reason(current)
+            if reason is not None:
+                return jsonify({"status": "error", "code": reason, "message": _UNAVAILABLE_MESSAGES[reason]}), 503
         try:
             session = registry.create(current, session_factory)
         except RuntimeError as exc:

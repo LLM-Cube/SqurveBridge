@@ -504,7 +504,7 @@ function AgentHarness({
   const sessionDetail = authenticated
     ? modelLabel
     : catalog?.available === false
-      ? label(t, 'agent.unavailable')
+      ? label(t, `agent.unavailable.${catalog.unavailable_reason || 'unknown'}`)
       : embedded
         ? label(t, 'agent.idleDetail')
         : label(t, 'agent.subtitle')

@@ -1,4 +1,6 @@
 import importlib
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -102,6 +104,42 @@ class PiApiTests(unittest.TestCase):
             session_factory=FakeSession,
         )
         return app.test_client(), registry, sock
+
+    def catalog_for(self, root, environment=None):
+        app = Flask(__name__)
+        self.api_module().register_pi_routes(
+            app, FakeSock(), Path(root), environment=environment or {}, session_factory=FakeSession,
+        )
+        return app.test_client().get("/api/agent").json
+
+    def install_fake_sdk(self, root, *, sdk=True, bridge=True):
+        if sdk:
+            entry = Path(root) / "demo/node_modules/@earendil-works/pi-coding-agent/dist/index.js"
+            entry.parent.mkdir(parents=True)
+            entry.write_text("")
+        if bridge:
+            (Path(root) / "demo").mkdir(exist_ok=True)
+            (Path(root) / "demo/pi_agent_bridge.mjs").write_text("")
+
+    def test_catalog_is_available_when_the_npm_sdk_is_installed(self):
+        with tempfile.TemporaryDirectory() as root:
+            self.install_fake_sdk(root)
+            catalog = self.catalog_for(root, {"PI_NODE_BINARY": sys.executable})
+        self.assertTrue(catalog["available"])
+        self.assertIsNone(catalog["unavailable_reason"])
+
+    def test_catalog_names_why_the_agent_is_unavailable(self):
+        cases = {
+            "node_missing": ({"sdk": True, "bridge": True}, {"PI_NODE_BINARY": "definitely-not-a-node-binary"}),
+            "sdk_missing": ({"sdk": False, "bridge": True}, {"PI_NODE_BINARY": sys.executable}),
+            "bridge_missing": ({"sdk": True, "bridge": False}, {"PI_NODE_BINARY": sys.executable}),
+        }
+        for reason, (files, environment) in cases.items():
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as root:
+                self.install_fake_sdk(root, **files)
+                catalog = self.catalog_for(root, environment)
+                self.assertFalse(catalog["available"])
+                self.assertEqual(catalog["unavailable_reason"], reason)
 
     def test_catalog_exposes_pi_and_project_skills(self):
         client, _, _ = self.make_client({"SQURVE_DEPLOYMENT_TARGET": "hf-space"})
