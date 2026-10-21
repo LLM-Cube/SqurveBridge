@@ -5,12 +5,17 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from demo import api_server
 from demo.query_runtime import SqurveDemo
 
 
+SPIDER_INSTALLED = (Path(api_server._project_root) / "benchmarks" / "spider" / "dev" / "dataset.json").is_file()
+
+
+@unittest.skipUnless(SPIDER_INSTALLED, "Spider is not installed; this reproduces a bug that needs the real benchmark")
 class QueryBenchmarkPathTests(unittest.TestCase):
     def setUp(self):
         api_server.app.config.update(TESTING=True)
@@ -56,7 +61,9 @@ class QueryByMethodTests(unittest.TestCase):
                 return {"status": "success", "sql": "SELECT 1", "trace": []}
 
         body = {"question": "How many singers are there?", "db_id": "concert_singer", "provider": "deepseek", **payload}
+        database = {"id": "concert_singer", "benchmark": "spider", "schema_path": "schema.json", "db_path": "db.sqlite"}
         with mock.patch.dict(os.environ, {"SQURVE_DEPLOYMENT_TARGET": "local"}, clear=False), \
+                mock.patch.object(api_server, "_find_database", return_value=database), \
                 mock.patch.object(api_server, "_llm_provider_catalog", return_value=[provider]), \
                 mock.patch.object(api_server, "_get_demo", return_value=FakeDemo()):
             return api_server.app.test_client().post("/api/query", json=body)
