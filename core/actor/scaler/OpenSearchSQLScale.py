@@ -13,6 +13,7 @@ from typing import Union, List, Optional, Dict
 from loguru import logger
 from llama_index.core.llms.llm import LLM
 from core.data_manage import Dataset
+from core.evidence import submit_with_evidence
 
 
 def find_foreign_keys_MYSQL_like(DATASET_JSON, db_name):
@@ -576,7 +577,7 @@ class OpenSearchSQLScaler(BaseScaler):
                 futures = []
                 for i in range(n):
                     llm_ = llm_lis[i % len(llm_lis)]
-                    futures.append(executor.submit(single_complete, llm_, prompt, temperature))
+                    futures.append(submit_with_evidence(executor, single_complete, llm_, prompt, temperature))
                 for future in as_completed(futures):
                     responses.append(future.result())
             return responses
@@ -600,7 +601,7 @@ class OpenSearchSQLScaler(BaseScaler):
                 futures = []
                 for i in range(n):
                     llm_ = llm_lis[i % len(llm_lis)]
-                    futures.append(executor.submit(llm_.complete, prompt, temperature=temperature))
+                    futures.append(submit_with_evidence(executor, llm_.complete, prompt, temperature=temperature))
                 for future in as_completed(futures):
                     try:
                         response = future.result().text

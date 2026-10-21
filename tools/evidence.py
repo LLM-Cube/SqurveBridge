@@ -55,6 +55,7 @@ ALLOWED_DIAGNOSTIC_FIELDS = frozenset(
         "stage_status",
         "token_usage",
         "latency_ms",
+        "metric_availability",
     }
 )
 FORBIDDEN_KEY_PARTS = {

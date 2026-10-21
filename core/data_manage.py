@@ -102,10 +102,34 @@ class Dataset:
         return self._dataset[item]
 
     def setitem(self, item, key, value):
+        old_value = self._dataset[item].get(key)
         self._dataset[item][key] = value
+        try:
+            from core.evidence import current_run, current_span_id
+            run = current_run()
+            if run is not None:
+                span_id = current_span_id()
+                run.producer_change(
+                    str(key), old_ref=run.value_ref(old_value), new_ref=run.value_ref(value),
+                    producer_basis_refs=[span_id] if span_id else None,
+                )
+        except Exception:
+            pass
 
     def __setitem__(self, key, value):
+        old_value = self._dataset[key]
         self._dataset[key] = value
+        try:
+            from core.evidence import current_run, current_span_id
+            run = current_run()
+            if run is not None:
+                span_id = current_span_id()
+                run.producer_change(
+                    "dataset_row", old_ref=run.value_ref(old_value), new_ref=run.value_ref(value),
+                    producer_basis_refs=[span_id] if span_id else None,
+                )
+        except Exception:
+            pass
 
     def if_schema_source_file(self):
         schema_source = Path(self._schema_source)

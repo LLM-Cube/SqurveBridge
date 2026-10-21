@@ -1,12 +1,15 @@
 import json
+import contextvars
+import functools
 import math
 import statistics
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Callable, Dict, Iterable, Iterator, Optional
 
 
 _thread_context = threading.local()
@@ -14,6 +17,94 @@ _original_thread_pool_submit = ThreadPoolExecutor.submit
 _thread_pool_submit_patched = False
 _global_loggers: list["TokenLogger"] = []
 _global_loggers_lock = threading.Lock()
+_logical_call_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("logical_call_id", default=None)
+_attempt_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("attempt_id", default=None)
+
+
+def observe_llm_call(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """Record one observable provider attempt without inferring hidden retries."""
+    @functools.wraps(fn)
+    def wrapped(self: Any, *args: Any, **kwargs: Any) -> Any:
+        try:
+            from core.evidence import current_run, identity
+            run = current_run()
+        except Exception:
+            run = None
+        if run is None:
+            return fn(self, *args, **kwargs)
+        logical_call_id = identity()
+        attempt_id = identity()
+        model = getattr(self, "model_name", None)
+        run.event("logical_call.started", logical_call_id=logical_call_id,
+                  operation_kind="llm", model=model, retry_observability="opaque")
+        run.event("llm.attempt.started", logical_call_id=logical_call_id,
+                  attempt_id=attempt_id, model=model, retry_observability="opaque")
+        logical_token = _logical_call_id.set(logical_call_id)
+        attempt_token = _attempt_id.set(attempt_id)
+        started = time.monotonic_ns()
+        try:
+            result = fn(self, *args, **kwargs)
+        except BaseException as exc:
+            duration = time.monotonic_ns() - started
+            run.event("llm.attempt.finished", logical_call_id=logical_call_id, attempt_id=attempt_id,
+                      execution_status="failed", error_type=type(exc).__name__, duration_ns=duration)
+            run.event("logical_call.finished", logical_call_id=logical_call_id,
+                      execution_status="failed", duration_ns=duration)
+            raise
+        else:
+            duration = time.monotonic_ns() - started
+            run.event("llm.attempt.finished", logical_call_id=logical_call_id, attempt_id=attempt_id,
+                      execution_status="success", duration_ns=duration)
+            run.event("logical_call.finished", logical_call_id=logical_call_id,
+                      execution_status="success", duration_ns=duration)
+            return result
+        finally:
+            _attempt_id.reset(attempt_token)
+            _logical_call_id.reset(logical_token)
+    return wrapped
+
+
+def observe_llm_stream_call(fn: Callable[..., Iterator[Any]]) -> Callable[..., Iterator[Any]]:
+    """Keep attempt identity active until a stream is fully consumed or fails."""
+    @functools.wraps(fn)
+    def wrapped(self: Any, *args: Any, **kwargs: Any) -> Iterator[Any]:
+        try:
+            from core.evidence import current_run, identity
+            run = current_run()
+        except Exception:
+            run = None
+        if run is None:
+            yield from fn(self, *args, **kwargs)
+            return
+        logical_call_id = identity()
+        attempt_id = identity()
+        model = getattr(self, "model_name", None)
+        run.event("logical_call.started", logical_call_id=logical_call_id,
+                  operation_kind="llm_stream", model=model, retry_observability="opaque")
+        run.event("llm.attempt.started", logical_call_id=logical_call_id,
+                  attempt_id=attempt_id, model=model, retry_observability="opaque")
+        logical_token = _logical_call_id.set(logical_call_id)
+        attempt_token = _attempt_id.set(attempt_id)
+        started = time.monotonic_ns()
+        try:
+            yield from fn(self, *args, **kwargs)
+        except BaseException as exc:
+            duration = time.monotonic_ns() - started
+            run.event("llm.attempt.finished", logical_call_id=logical_call_id, attempt_id=attempt_id,
+                      execution_status="failed", error_type=type(exc).__name__, duration_ns=duration)
+            run.event("logical_call.finished", logical_call_id=logical_call_id,
+                      execution_status="failed", duration_ns=duration)
+            raise
+        else:
+            duration = time.monotonic_ns() - started
+            run.event("llm.attempt.finished", logical_call_id=logical_call_id, attempt_id=attempt_id,
+                      execution_status="success", duration_ns=duration)
+            run.event("logical_call.finished", logical_call_id=logical_call_id,
+                      execution_status="success", duration_ns=duration)
+        finally:
+            _attempt_id.reset(attempt_token)
+            _logical_call_id.reset(logical_token)
+    return wrapped
 
 
 def get_llm_tag() -> Optional[str]:
@@ -43,7 +134,7 @@ def _patch_thread_pool_submit() -> None:
 
         return _original_thread_pool_submit(self, run_with_llm_tag, *args, **kwargs)
 
-    ThreadPoolExecutor.submit = submit_with_llm_tag
+    ThreadPoolExecutor.submit = submit_with_llm_tag  # type: ignore[method-assign]
     _thread_pool_submit_patched = True
 
 
@@ -67,12 +158,14 @@ def append_llm_tag(part: str):
         set_llm_tag(previous)
 
 
-def _read_usage_value(usage: Any, key: str) -> int:
+def _read_optional_usage_value(usage: Any, key: str) -> Optional[int]:
     if usage is None:
-        return 0
+        return None
     if isinstance(usage, dict):
-        return int(usage.get(key) or 0)
-    return int(getattr(usage, key, 0) or 0)
+        value = usage.get(key)
+    else:
+        value = getattr(usage, key, None)
+    return None if value is None else int(value)
 
 
 def _percentile(values: Iterable[int], percentile: float) -> float:
@@ -105,10 +198,19 @@ class TokenLogger:
             _global_loggers.append(self)
 
     def record(self, usage: Any, model: Optional[str] = None, tag: Optional[str] = None) -> None:
-        prompt_tokens = _read_usage_value(usage, "prompt_tokens")
-        completion_tokens = _read_usage_value(usage, "completion_tokens")
-        total_tokens = _read_usage_value(usage, "total_tokens") or prompt_tokens + completion_tokens
-        if total_tokens <= 0:
+        reported_prompt_tokens = _read_optional_usage_value(usage, "prompt_tokens")
+        reported_completion_tokens = _read_optional_usage_value(usage, "completion_tokens")
+        reported_total_tokens = _read_optional_usage_value(usage, "total_tokens")
+        prompt_tokens = reported_prompt_tokens or 0
+        completion_tokens = reported_completion_tokens or 0
+        if reported_total_tokens is not None:
+            total_tokens = reported_total_tokens
+        elif reported_prompt_tokens is not None and reported_completion_tokens is not None:
+            total_tokens = reported_prompt_tokens + reported_completion_tokens
+        else:
+            total_tokens = 0
+        if (reported_prompt_tokens is None and reported_completion_tokens is None
+                and reported_total_tokens is None):
             return
 
         record = {
@@ -121,6 +223,36 @@ class TokenLogger:
         }
         with self._lock:
             self.records.append(record)
+        # Evidence is observational and fail-open; token logging remains usable
+        # when the optional local collector is absent or unavailable.
+        try:
+            from core.evidence import current_run
+            run = current_run()
+            if run is not None:
+                logical_call_id = _logical_call_id.get()
+                attempt_id = _attempt_id.get()
+                evidence_total_tokens = reported_total_tokens
+                if (
+                    evidence_total_tokens is None
+                    and reported_prompt_tokens is not None
+                    and reported_completion_tokens is not None
+                ):
+                    evidence_total_tokens = reported_prompt_tokens + reported_completion_tokens
+                reported_usage = {
+                    key: value
+                    for key, value in {
+                        "prompt_tokens": reported_prompt_tokens,
+                        "completion_tokens": reported_completion_tokens,
+                        "total_tokens": evidence_total_tokens,
+                    }.items()
+                    if value is not None
+                }
+                run.event("usage.reported", scope="attempt" if attempt_id else "provider_observation",
+                          source="provider_sdk", logical_call_id=logical_call_id, attempt_id=attempt_id,
+                          retry_observability="opaque",
+                          model=model, tag=record["tag"], usage=reported_usage)
+        except Exception:
+            pass
 
     def total(self) -> Dict[str, int]:
         with self._lock:
@@ -231,7 +363,7 @@ def collect_all_token_data() -> Dict[str, Any]:
     with _global_loggers_lock:
         loggers = list(_global_loggers)
 
-    records = []
+    records: list[Dict[str, Any]] = []
     total = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
     for logger in loggers:

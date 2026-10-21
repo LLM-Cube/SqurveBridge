@@ -14,6 +14,25 @@ from reproduce.eval.registry.spec import MetricSpec
 def register(registry: MetricRegistry) -> None:
     registry.register_all([
         MetricSpec(
+            id="sql_execution_time", layer="L2", source="derived:v2.sql_execution_time",
+            aggregation="derived", unit="seconds", higher_is_better=False,
+            publication="aggregate_only", protocol_id="monotonic-sql-execution-timing",
+            protocol_version="1", candidate_scope="selected",
+            description="Complete selected-candidate SQL execution timing; reused results have no fresh timing.",
+        ),
+        MetricSpec(
+            id="actor_time", layer="L2", source="derived:v2.actor_time", aggregation="derived",
+            unit="seconds", higher_is_better=False, publication="aggregate_only",
+            protocol_id="monotonic-operation-timing", protocol_version="1",
+            description="Inclusive Actor duration when runtime evidence is available.",
+        ),
+        MetricSpec(
+            id="workflow_time", layer="L2", source="derived:v2.workflow_time", aggregation="derived",
+            unit="seconds", higher_is_better=False, publication="aggregate_only",
+            protocol_id="monotonic-operation-timing", protocol_version="1",
+            description="Workflow end-to-end duration, kept separate from child durations.",
+        ),
+        MetricSpec(
             id="latency_avg", layer="L2", source="act_elapsed_s",
             aggregation="mean", unit="seconds", higher_is_better=False,
             interval="bootstrap", publication="aggregate_only",

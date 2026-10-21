@@ -14,7 +14,43 @@ Produces a detailed, exhaustive report covering:
 from __future__ import annotations
 
 import io
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
+
+
+def format_v2_report(scores: dict) -> str:
+    """Render protocol identity, value, coverage and availability for a v2 bundle."""
+    from reproduce.eval.protocol import EvaluationBundleV2
+
+    bundle = EvaluationBundleV2.model_validate(scores)
+    lines = [f"Evaluation {bundle.run_id}",
+             f"bundle={bundle.bundle_protocol}@{bundle.bundle_protocol_version}",
+             f"evaluator={bundle.evaluator_protocol}",
+             f"cohort={bundle.dataset}/{bundle.split} snapshot={bundle.database_snapshot}", ""]
+    for metric_id, metric in sorted(bundle.aggregate.items()):
+        if metric.categorical_counts is not None:
+            value = ",".join(f"{key}={count}" for key, count in sorted(metric.categorical_counts.items()))
+        else:
+            value = "unavailable" if metric.value is None else f"{metric.value:.6g}"
+        reason = f" reason={metric.reason}" if metric.reason else ""
+        lines.append(f"{metric_id}: {value} status={metric.status.value} "
+                     f"coverage={metric.coverage:.3f} protocol={metric.protocol_id}@{metric.protocol_version}{reason}")
+    attribution_summary = (bundle.provenance or {}).get("attribution_summary") or {}
+    outcomes = attribution_summary.get("outcome_distribution") or {}
+    bottlenecks = attribution_summary.get("failure_only_bottleneck_distribution") or {}
+    if outcomes:
+        lines.extend(["", "attribution outcomes protocol=project.rule-attribution@2"])
+        lines.extend(f"{label}: {count}" for label, count in sorted(outcomes.items()))
+        lines.append("failure-only bottlenecks")
+        lines.extend(f"{label}: {count}" for label, count in sorted(bottlenecks.items()))
+    component_counts: Dict[str, int] = {}
+    for sample in bundle.samples:
+        for observation in sample.component_observations:
+            protocol = str(observation.get("protocol_id", "unknown"))
+            component_counts[protocol] = component_counts.get(protocol, 0) + 1
+    if component_counts:
+        lines.extend(["", "component observations"])
+        lines.extend(f"{protocol}: {count}" for protocol, count in sorted(component_counts.items()))
+    return "\n".join(lines) + "\n"
 
 
 # ─── Formatting helpers ──────────────────────────────────────────────
@@ -282,7 +318,7 @@ def _print_stage_block(task_id: str, payload: dict, task_config: Optional[dict])
 
     metrics = payload.get("metrics") or {}
     if not metrics:
-        print(f"    (无可用指标)")
+        print("    (无可用指标)")
     else:
         print(f"    {'指标':<20} {'平均分':>8}  {'有效/总数':>9}  {'说明'}")
         for metric, stats in metrics.items():
@@ -367,7 +403,7 @@ def print_eval_report(
                       "特征偏差距离"))
 
     print()
-    print(f"  最终指标:")
+    print("  最终指标:")
     print(f"    {'指标':<16} {'平均分':>8}  {'有效/总数':>9}  说明")
     print(f"    {_SUB_DIVIDER}")
     for name, avg, valid, total, note in rows:
@@ -416,12 +452,12 @@ def print_intermediate_data_paths(config: dict, save_lis: List[str] = None) -> N
 
     ds_dir = config.get("dataset_save_dir", "—")
     sql_dir = config.get("sql_save_dir", "—")
-    print(f"    [global]")
+    print("    [global]")
     print(f"      dataset_save_dir   : {ds_dir}")
     print(f"      sql_save_dir       : {sql_dir}")
 
     if save_lis:
-        print(f"    [final output]")
+        print("    [final output]")
         for i, path in enumerate(save_lis):
             print(f"      iteration {i + 1}       : {path}")
     print()
@@ -451,7 +487,7 @@ def print_token_summary(token_data: Optional[dict], *, full: bool = False) -> No
     if not full:
         by_tag = token_data.get("by_tag") or {}
         if by_tag:
-            print(f"    (逐样本明细已写入 scores / detailed-report，终端不展开)")
+            print("    (逐样本明细已写入 scores / detailed-report，终端不展开)")
         return
 
     by_tag = token_data.get("by_tag") or {}

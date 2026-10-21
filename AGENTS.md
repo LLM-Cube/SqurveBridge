@@ -52,3 +52,17 @@ redistribution rights, raw question/SQL fixtures, sample identifiers, and
 provider/model metadata. The configured GitHub and Hugging Face namespaces are
 approved publication targets and are not themselves privacy findings.
 SqurveBridge is the public project; Squrve is its upstream foundation.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs are tracked in GitHub Issues for `LLM-Cube/SqurveBridge`, using the `gh` CLI. See [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md).
+
+### Triage labels
+
+Use `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See [docs/agents/triage-labels.md](docs/agents/triage-labels.md).
+
+### Domain docs
+
+This is a single-context repository: read root domain vocabulary and relevant ADRs under `docs/adr/`. See [docs/agents/domain.md](docs/agents/domain.md).

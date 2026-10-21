@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 from typing import Union, Dict
 import time
+import hashlib
 import pandas as pd
 from google.cloud import bigquery
 import snowflake.connector
@@ -155,6 +156,58 @@ def get_sql_exec_result_with_time(db_type: str, **kwargs):
     return elapsed, res
 
 
+def execute_sql_observation(db_type: str, *, sql_query: str, db_path: str | PathLike,
+                            clock=time.monotonic) -> dict:
+    """Core-safe typed execution facts for offline evaluators.
+
+    This boundary does not import evaluation code.  Unsupported backends are
+    explicit; callers that need native timeout/cancellation semantics must use
+    a backend adapter that can actually observe them.
+    """
+    if db_type != "sqlite":
+        return {"status": "unsupported", "backend": db_type, "dialect": db_type,
+                "backend_error_code": "unsupported_typed_execution",
+                "backend_error_source": "core.db_connect"}
+    started = clock()
+    conn = None
+    try:
+        connection_started = clock()
+        database_uri = Path(db_path).resolve().as_uri() + "?mode=ro"
+        conn = sqlite3.connect(database_uri, uri=True)
+        connection_s = clock() - connection_started
+        query_started = clock()
+        cursor = conn.execute(sql_query)
+        query_s = clock() - query_started
+        columns = [str(item[0]) for item in (cursor.description or [])]
+        fetch_started = clock()
+        raw_rows = cursor.fetchall()
+        fetch_s = clock() - fetch_started
+        materialization_started = clock()
+        rows = [tuple(row) for row in raw_rows]
+        materialization_s = clock() - materialization_started
+        return {
+            "status": "success", "backend": "sqlite", "dialect": "sqlite",
+            "rows": rows, "columns": columns, "execution_complete": True,
+            "fetch_complete": True, "preservation_complete": True,
+            "observed_row_count": len(rows), "known_total_row_count": len(rows),
+            "timing": {"query_s": query_s, "connection_s": connection_s, "fetch_s": fetch_s,
+                       "materialization_s": materialization_s,
+                       "total_s": clock() - started, "clock": "monotonic"},
+        }
+    except sqlite3.Error as exc:
+        return {
+            "status": "execution_error", "backend": "sqlite", "dialect": "sqlite",
+            "backend_error_code": getattr(exc, "sqlite_errorname", exc.__class__.__name__),
+            "backend_error_source": "sqlite", "error_type": exc.__class__.__name__,
+            "error_message": str(exc),
+            "timing": {"total_s": clock() - started, "clock": "monotonic",
+                       "scope": "connection+query+fetch+materialization"},
+        }
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def execute_sql(db_type, db_path, sql, credential):
     if db_type not in ["sqlite", "snowflake", "big_query"]:
         return "Unsupported db_type"
@@ -170,7 +223,31 @@ def execute_sql(db_type, db_path, sql, credential):
     if credential is not None:
         args["credential_path"] = credential
     
-    exec_result = get_sql_exec_result(db_type, **args)
+    evidence_run = None
+    operation_id = None
+    try:
+        from core.evidence import current_run, identity
+        evidence_run = current_run()
+        operation_id = identity() if evidence_run else None
+    except Exception:
+        pass
+    sql_ref = hashlib.sha256(sql.encode("utf-8")).hexdigest()
+    if evidence_run:
+        evidence_run.event(
+            "db.started", operation_id=operation_id, db_type=db_type, sql_ref=sql_ref,
+            sql_text=sql if evidence_run.capture_sql else None,
+            sql_text_availability="present" if evidence_run.capture_sql else "disabled",
+        )
+    started_ns = time.monotonic_ns()
+    try:
+        exec_result = get_sql_exec_result(db_type, **args)
+    except BaseException as exc:
+        if evidence_run:
+            evidence_run.event("db.finished", operation_id=operation_id, execution_status="failed",
+                               error_type=type(exc).__name__, fetch_completeness="unknown",
+                               preservation_completeness="unknown",
+                               duration_ns=time.monotonic_ns() - started_ns)
+        raise
     if isinstance(exec_result, tuple):
         if len(exec_result) == 3:
             res, err, _ = exec_result
@@ -183,9 +260,39 @@ def execute_sql(db_type, db_path, sql, credential):
         res = exec_result
         err = None
     if err:
+        if evidence_run:
+            evidence_run.event("db.finished", operation_id=operation_id, execution_status="failed",
+                               error_type="database_error", fetch_completeness="unknown",
+                               preservation_completeness="unknown",
+                               duration_ns=time.monotonic_ns() - started_ns)
         return err
-    if res is None or (isinstance(res, pd.DataFrame) and res.empty):
+    if isinstance(res, pd.DataFrame) and res.empty:
+        if evidence_run:
+            result_ref = evidence_run.artifact(res.to_dict(orient="split")) if evidence_run.capture_outputs else None
+            evidence_run.event("db.finished", operation_id=operation_id, execution_status="success",
+                               fetch_completeness="complete",
+                               preservation_completeness="complete" if result_ref else "disabled",
+                               result_ref=result_ref, observed_row_count=0, known_total_row_count=0,
+                               duration_ns=time.monotonic_ns() - started_ns)
+        return "No data found for the specified query"
+    if res is None:
+        if evidence_run:
+            evidence_run.event("db.finished", operation_id=operation_id, execution_status="success",
+                               fetch_completeness="unknown", preservation_completeness="unknown",
+                               observed_row_count=None, known_total_row_count=None,
+                               duration_ns=time.monotonic_ns() - started_ns)
         return "No data found for the specified query"
     if isinstance(res, pd.DataFrame):
+        if evidence_run:
+            result_ref = evidence_run.artifact(res.to_dict(orient="split")) if evidence_run.capture_outputs else None
+            evidence_run.event("db.finished", operation_id=operation_id, execution_status="success",
+                               fetch_completeness="complete",
+                               preservation_completeness="complete" if result_ref else "disabled",
+                               result_ref=result_ref, observed_row_count=len(res),
+                               known_total_row_count=len(res), duration_ns=time.monotonic_ns() - started_ns)
         return str(res)
+    if evidence_run:
+        evidence_run.event("db.finished", operation_id=operation_id, execution_status="success",
+                           fetch_completeness="unknown", preservation_completeness="unknown",
+                           observed_row_count=None, duration_ns=time.monotonic_ns() - started_ns)
     return str(res)

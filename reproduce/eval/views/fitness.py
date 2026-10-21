@@ -40,4 +40,16 @@ def fitness_inputs(scores: Dict[str, Any]) -> Dict[str, Optional[float]]:
 def bundle_fitness(scores: Dict[str, Any], *, delta: Dict[str, Any] | None = None,
                    weights: Dict[str, float] | None = None) -> float:
     """Delegates to the evolution fitness contract (no behavior change)."""
+    if scores.get("schema_version") == 2:
+        inputs = fitness_inputs(scores)
+        if inputs["ex"] is None:
+            raise ValueError("v2 fitness requires available ex_at_1 evidence")
+        compatibility = {
+            "aggregate": {
+                "ex": {"avg": inputs["ex"]}, "em": {"avg": inputs["em"]},
+                "ves": {"avg": inputs["ves"]},
+            },
+            "sample_count": len(scores.get("samples") or []),
+        }
+        return fitness_from_scores(compatibility, delta=delta, weights=weights)
     return fitness_from_scores(scores, delta=delta, weights=weights)

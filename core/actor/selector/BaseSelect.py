@@ -47,6 +47,14 @@ class BaseSelector(Actor):
         except Exception as e:
             logger.info(f"Error when loading pred_sql: {e}. Treat sql_list storing the generated sqls.")
 
+        try:
+            from core.evidence import current_run
+            run = current_run()
+            if run is not None:
+                run.observe_actor_candidate_inputs(sql_list)
+        except Exception:
+            pass
+
         return sql_list
 
     def execute_sql_safe(self, sql: str, db_type: str, db_path: str, credential: Any = None) -> Dict[str, Any]:

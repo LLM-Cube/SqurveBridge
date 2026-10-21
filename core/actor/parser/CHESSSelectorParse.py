@@ -12,6 +12,7 @@ from core.data_manage import Dataset, single_central_process
 from core.utils import load_dataset, save_dataset
 from core.db_connect import execute_sql
 from llama_index.core.llms.llm import LLM
+from core.evidence import submit_with_evidence
 
 @BaseParser.register_actor
 class CHESSSelectorParser(BaseParser):
@@ -243,7 +244,8 @@ Only output a json as your response."""
         relevant_columns = {}
         if self.open_parallel:
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                futures = [executor.submit(filter_single, (t, c, p)) for t, c, p in column_profiles]
+                futures = [submit_with_evidence(executor, filter_single, (t, c, p))
+                           for t, c, p in column_profiles]
                 for future in as_completed(futures):
                     t, c, relevant = future.result()
                     if relevant:

@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from core.data_manage import single_central_process, Dataset, save_dataset
 from core.utils import load_dataset, parse_schema_from_df
 from core.actor.parser.parse_utils import slice_schema_df
+from core.evidence import submit_with_evidence
 
 @ActorPool.register_actor
 class BaseParser(Actor):
@@ -188,7 +189,8 @@ def parallel_slice_parse(func):
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 # 提交所有任务，保存 future 和对应的索引
                 future_to_index = {
-                    executor.submit(func, self, item, sub_schema, data_logger, update_dataset=False, **kwargs): idx
+                    submit_with_evidence(executor, func, self, item, sub_schema, data_logger,
+                                         update_dataset=False, **kwargs): idx
                     for idx, sub_schema in enumerate(sub_schema_lis)
                 }
 

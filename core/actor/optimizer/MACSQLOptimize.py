@@ -10,6 +10,7 @@ from core.data_manage import Dataset, load_dataset, save_dataset, single_central
 from core.db_connect import get_sql_exec_result
 from core.utils import sql_clean, parse_schema_from_df
 from llama_index.core.llms.llm import LLM
+from core.evidence import submit_with_evidence
 
 def parse_sql_from_string(input_string: str) -> str:
     sql_pattern = r'```sql(.*?)```'
@@ -210,7 +211,7 @@ Now please fixup old SQL and generate new SQL again.
         optimized_sqls = []
         if self.open_parallel and len(sql_list) > 1:
             with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                futures = [executor.submit(process_sql, sql) for sql in sql_list]
+                futures = [submit_with_evidence(executor, process_sql, sql) for sql in sql_list]
                 for future in concurrent.futures.as_completed(futures):
                     optimized_sqls.append(future.result())
         else:
@@ -225,4 +226,4 @@ Now please fixup old SQL and generate new SQL again.
             data_logger.info(f"{self.NAME}.optimized_sql | output={optimized_sqls}")
             data_logger.info(f"{self.NAME}.act end | item={item}")
         
-        return output 
+        return output

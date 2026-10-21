@@ -1,7 +1,7 @@
 import warnings
 from os import PathLike
 from pathlib import Path
-from typing import Union, List, Dict, Optional
+from typing import Any, Union, List, Dict, Optional
 import time
 from loguru import logger
 
@@ -791,7 +791,12 @@ class Engine:
 
         return self.tasks.get(task_id)
 
-    def execute(self):
+    def execute(
+            self,
+            evidence_directory: Union[str, PathLike, None] = None,
+            evidence_run_id: Optional[str] = None,
+            **evidence_options: Any,
+    ) -> None:
         logger.info("开始执行 Engine 任务...")
         execute_task = self.parse_exec_process(self.exec_process)
         if execute_task is None:
@@ -800,7 +805,12 @@ class Engine:
         # execute the task
         start_time = time.time()
         logger.info(f"开始执行任务: {execute_task.name} ({execute_task.task_id})")
-        execute_task.run()
+        if evidence_directory is None:
+            execute_task.run()
+        else:
+            from core.evidence import EvidenceRun, identity
+            with EvidenceRun(Path(evidence_directory), run_id=evidence_run_id or identity(), **evidence_options):
+                execute_task.run()
         end_time = time.time()
         # save the `task`
         # execute_task.save()

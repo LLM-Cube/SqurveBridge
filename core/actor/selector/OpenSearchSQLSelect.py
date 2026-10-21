@@ -4,6 +4,7 @@ from pathlib import Path
 
 from core.actor.selector.BaseSelect import BaseSelector
 from core.data_manage import Dataset
+from core.evidence import submit_with_evidence
 
 @BaseSelector.register_actor
 class OpenSearchSQLSelector(BaseSelector):
@@ -102,7 +103,8 @@ class OpenSearchSQLSelector(BaseSelector):
         # Concurrent execution
         execution_results = []
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            futures = [executor.submit(self.execute_sql_safe, sql, db_type, db_path, credential) for sql in pred_sql]
+            futures = [submit_with_evidence(executor, self.execute_sql_safe, sql, db_type, db_path, credential)
+                       for sql in pred_sql]
             for future in as_completed(futures):
                 execution_results.append(future.result())
 

@@ -11,7 +11,13 @@ def build_weakness_profile(scores: dict[str, Any]) -> str:
     aggregate = scores.get("aggregate") or {}
     lines = [f"# Weakness Profile: {run_id}", ""]
 
-    ex = ((aggregate.get("ex") or {}).get("avg"))
+    if scores.get("schema_version") == 2:
+        ex_cell = aggregate.get("ex_at_1") or {}
+        ex = ex_cell.get("value") if ex_cell.get("status") == "available" else None
+        lines.append(f"- Protocol: {scores.get('evaluator_protocol', 'unknown')}")
+        lines.append(f"- EX@1 coverage: {_fmt(ex_cell.get('coverage'))}")
+    else:
+        ex = ((aggregate.get("ex") or {}).get("avg"))
     lines.append(f"- EX: {_fmt(ex)}")
 
     token = aggregate.get("token") or {}

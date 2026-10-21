@@ -9,6 +9,7 @@ from core.actor.selector.BaseSelect import BaseSelector
 from core.data_manage import Dataset
 from core.db_connect import get_sql_exec_result_with_time
 from core.utils import compare_pandas_table, load_dataset, parse_json_from_str
+from core.evidence import submit_with_evidence
 
 @BaseSelector.register_actor
 class ChaseSelector(BaseSelector):
@@ -198,7 +199,7 @@ Return the result strictly in JSON format:
         # Execute comparisons in parallel with max_workers threads
         comparison_results = []
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_pair = {executor.submit(compare_pair, pair): pair for pair in pairs}
+            future_to_pair = {submit_with_evidence(executor, compare_pair, pair): pair for pair in pairs}
             for future in as_completed(future_to_pair):
                 try:
                     result = future.result()

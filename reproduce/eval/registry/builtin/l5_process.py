@@ -53,8 +53,10 @@ _SPECS = [
 def register(registry: MetricRegistry) -> None:
     for metric_id, description, higher_is_better in _SPECS:
         registry.register(MetricSpec(
-            id=metric_id, layer="L5", source=f"derived:{metric_id}",
+            id=metric_id, layer="L5", source=f"derived:v2.{metric_id}",
             aggregation="derived", higher_is_better=higher_is_better,
             publication="aggregate_only", sliceable=False,
+            protocol_id="project.component-process-metric", protocol_version="2",
+            candidate_scope=("stage_pair" if metric_id.startswith(("refinement_", "selection_")) else "none"),
             description=description,
         ))

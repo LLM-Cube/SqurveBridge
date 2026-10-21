@@ -2,8 +2,8 @@
 
 Version 1 is the historical, implicit contract produced by
 ``reproduce.metrics.assembly.build_scores`` (no ``schema_version`` key).
-Version 2 is reserved for the registry-driven bundle and is introduced only
-when external artifacts change (views migration), never silently.
+Version 2 is the typed, registry-driven protocol bundle.  Version dispatch is
+explicit so unversioned historical files retain their original interpretation.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from typing import Any
 
 
 SCHEMA_VERSION_KEY = "schema_version"
-CURRENT_VERSION = 1
+CURRENT_VERSION = 2
 
 V1_REQUIRED_TOP_KEYS = frozenset({
     "run_id",
@@ -59,6 +59,15 @@ def bundle_version(scores: dict[str, Any]) -> int:
 
 def validate_bundle(scores: dict[str, Any]) -> list[str]:
     """Return contract violations (empty list = valid)."""
+    if bundle_version(scores) == 2:
+        try:
+            from reproduce.eval.protocol import EvaluationBundleV2
+            EvaluationBundleV2.model_validate(scores)
+        except Exception as exc:
+            return [f"invalid v2 bundle: {exc}"]
+        return []
+    if bundle_version(scores) != 1:
+        return [f"unsupported bundle schema version: {bundle_version(scores)}"]
     problems = []
     if not isinstance(scores, dict):
         return ["bundle must be a dict"]

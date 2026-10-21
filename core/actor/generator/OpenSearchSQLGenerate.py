@@ -15,6 +15,7 @@ from core.actor.generator.BaseGenerate import BaseGenerator
 from core.utils import load_dataset, save_dataset
 from core.actor.generator.sql_debug import sql_debug_by_feedback
 from core.db_connect import get_sql_exec_result
+from core.evidence import submit_with_evidence
 
 # Prompts from all_prompt.py and prompts.py
 EXTRACT_PROMPT = """/* Some extract examples are provided based on similar problems: */
@@ -1208,7 +1209,7 @@ def muti_process_sql(dcheck, sqls, l_values, values, question, new_db_info, hint
 
     with ThreadPoolExecutor(max_workers=n) as executor:
         future_to_sql = {
-            executor.submit(process_sql, dcheck, sql, l_values, values, question, new_db_info, db_col.keys(), hint,
+            submit_with_evidence(executor, process_sql, dcheck, sql, l_values, values, question, new_db_info, db_col.keys(), hint,
                             key_col_des, tmp_prompt, db_col, foreign_set, align_methods, db_type, db_path,
                             credential, db_id): (sqls[sql], sql) for sql in sqls}
 
