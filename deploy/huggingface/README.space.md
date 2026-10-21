@@ -30,7 +30,7 @@ storage and set `SQURVE_WORKSPACE_DIR=/data/workspace`.
 ## Deployment source
 
 The Space is published automatically from the reviewed `main` branch of
-`Zhanghoks/SqurveBridge`. GitHub Actions first runs the repository quality gates
+`LLM-Cube/SqurveBridge`. GitHub Actions first runs the repository quality gates
 and builds the explicit allowlisted Space context; only that generated context
 is uploaded. Authentication uses a Hugging Face Trusted Publisher and a
 short-lived, Space-scoped OIDC token, so no long-lived Hub token is stored in

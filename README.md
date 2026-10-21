@@ -12,7 +12,7 @@ Integrate · Reproduce · Diagnose · Improve
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-Hugging%20Face-FFD21E.svg)](https://huggingface.co/spaces/zmmjjkk/SqurveBridge)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-2ea44f.svg)](LICENSE)
-[![Upstream](https://img.shields.io/badge/Upstream-Squrve-6f42c1.svg)](https://github.com/Satissss/Squrve)
+[![Upstream](https://img.shields.io/badge/Upstream-Squrve-6f42c1.svg)](https://github.com/LLM-Cube/Squrve)
 
 [Reproduce in 30 Minutes](#reproduce-in-30-minutes) · [Architecture](#architecture) · [Features](#features) · [Demo](#demo) · [Docs](#documentation)
 
@@ -52,7 +52,7 @@ Remote model calls may incur cost. Full walkthrough:
 
 SqurveBridge reconstructs released Text-to-SQL methods as inspectable **Squrve Actors**, normalizes benchmarks behind one contract, runs method–database pairs through reproducible configs, and persists sample- and stage-level evidence.
 
-It is **not** another Text-to-SQL model — it is the bridge between released methods, new databases, and trustworthy evaluation. Built on upstream [Squrve](https://github.com/Satissss/Squrve), with an embedded [Pi](https://github.com/earendil-works/pi) Agent as the Demo runtime kernel.
+It is **not** another Text-to-SQL model — it is the bridge between released methods, new databases, and trustworthy evaluation. Built on upstream [Squrve](https://github.com/LLM-Cube/Squrve), with an embedded [Pi](https://github.com/earendil-works/pi) Agent as the Demo runtime kernel.
 
 <div align="center">
 <img src="assets/squrvebridge-framework.png" alt="SqurveBridge framework overview" width="95%" />

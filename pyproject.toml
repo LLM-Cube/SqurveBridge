@@ -148,7 +148,7 @@ dependencies = [
 ]
 
 [project.urls]
-"Upstream Squrve" = "https://github.com/Satissss/Squrve"
+"Upstream Squrve" = "https://github.com/LLM-Cube/Squrve"
 
 [tool.setuptools.packages.find]
 include = ["core*", "reproduce*"]
