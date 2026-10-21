@@ -229,6 +229,7 @@ def _sql_provider_catalog() -> list[dict[str, object]]:
             "id": provider,
             "models": list(models),
             "default_model": models[0],
+            "models_source": "catalog",
         }
         if provider == "qwen":
             item["endpoints"] = [
@@ -690,6 +691,7 @@ def _llm_provider_catalog() -> list[dict]:
             "configured": bool(resolve_api_key(provider, None)),
             "models": models,
             "default_model": active_model if active_model in models else models[0],
+            "models_source": "catalog",
             "env_var": PROVIDER_ENV_VARS[provider],
         })
     return catalog
@@ -795,6 +797,86 @@ def update_provider():
     except RuntimeError:
         return _json_error("Evaluation process could not be started.", 503)
     return jsonify({"status": "ok", "provider": status, "llm_providers": _llm_provider_catalog()})
+
+
+_listing_rate_window = 60.0
+_listing_rate_limit = 30
+_listing_rate_hits: dict[str, list[float]] = {}
+_listing_rate_lock = threading.Lock()
+
+
+def _listing_rate_allowed(identity: str) -> bool:
+    now = time.monotonic()
+    with _listing_rate_lock:
+        hits = [t for t in _listing_rate_hits.get(identity, ()) if now - t < _listing_rate_window]
+        allowed = len(hits) < _listing_rate_limit
+        if allowed:
+            hits.append(now)
+        _listing_rate_hits[identity] = hits
+        if len(_listing_rate_hits) > 4096:
+            for key in [k for k, v in _listing_rate_hits.items() if not v or now - v[-1] >= _listing_rate_window]:
+                del _listing_rate_hits[key]
+    return allowed
+
+
+def _listing_credential(
+    payload: dict,
+    provider: str,
+    hosted: bool,
+    session_id: str | None,
+) -> tuple[SqlCredential, str | None]:
+    """Resolve the key a model listing should use: request, then session, then local env.
+
+    Hosted deployments never read the server environment. The credential checks
+    are reused so endpoint and workspace IDs are validated exactly as when
+    saving; the model field is a placeholder.
+    """
+    api_key = payload.get("api_key")
+    saved_base_url = None
+    if not (isinstance(api_key, str) and api_key.strip()):
+        saved = _sql_credentials.get(session_id or "") if hosted else None
+        if saved is not None and saved.provider == provider:
+            api_key, saved_base_url = saved.api_key, saved.base_url
+        elif not hosted:
+            load_dotenv(_project_root / ".env")
+            api_key = resolve_api_key(provider, None)
+    credential = _credential_from_payload({**payload, "api_key": api_key, "model": "listing"})
+    return credential, saved_base_url or credential.base_url
+
+
+@app.post("/api/llm/models")
+def list_llm_models():
+    origin_error = _same_origin_error()
+    if origin_error:
+        return origin_error
+    payload = request.get_json(silent=True) or {}
+    provider = str(payload.get("provider") or "").strip()
+    if provider not in _supported_providers:
+        return _json_error("Unsupported provider.")
+    hosted = deployment_target() == "hf-space"
+    session_id, _ = _browser_session(create=False)
+    if hosted and not _listing_rate_allowed(session_id or request.remote_addr or "anonymous"):
+        return _json_error("Too many model refreshes; retry shortly.", 429)
+    try:
+        credential, base_url = _listing_credential(payload, provider, hosted, session_id)
+    except SqlAuthError as exc:
+        return _json_error(f"Invalid request: {exc.code}.")
+    fallback = _provider_model_ids().get(provider) or []
+    listing = model_catalog.list_provider_models(
+        provider,
+        credential.api_key,
+        fallback=fallback,
+        url=f"{base_url}/models" if base_url else None,
+        refresh=bool(payload.get("refresh")),
+    )
+    models = model_catalog.default_first(provider, list(listing["models"]))
+    return jsonify({
+        "status": "ok",
+        "provider": provider,
+        **listing,
+        "models": models,
+        "default_model": models[0] if models else "",
+    })
 
 
 @app.get("/api/capabilities")

@@ -7,6 +7,8 @@ import { deploymentTarget, featureEnabled } from './runtimeMode.js'
 import { detectLocale, translate } from './i18n/index.js'
 import { sanitizeRunError } from './full-flow/RunWorkspace.jsx'
 import { modelsForProvider } from './llmCatalog.js'
+import ModelSourceRow from './ModelSourceRow.jsx'
+import { useLiveModels } from './useLiveModels.js'
 
 const api = async (path, options = {}) => {
   const response = await fetch(path, options)
@@ -45,9 +47,11 @@ function ProviderConfig({
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const liveModels = useLiveModels(postJson)
   const panelRef = useRef(null)
   const selected = providers.find(item => item.id === provider)
-  const catalogModels = modelsForProvider(selected, provider)
+  const source = liveModels.forProvider(provider, modelsForProvider(selected, provider))
+  const catalogModels = source.models
 
   useEffect(() => {
     const current = health?.provider?.provider
@@ -80,6 +84,12 @@ function ProviderConfig({
     setModel(preferred || catalog?.default_model || '')
     setMessage('')
     setError('')
+    liveModels.reset()
+  }
+
+  const refreshModels = async () => {
+    setError('')
+    setModel(await liveModels.refresh({ provider, apiKey }, model))
   }
 
   const close = () => {
@@ -137,7 +147,8 @@ function ProviderConfig({
       <datalist id="local-model-catalog">
         {catalogModels.map(item => <option key={item} value={item} />)}
       </datalist>
-      <small>Pick a catalog model above, or type any model ID this provider supports.</small>
+      <ModelSourceRow active={source.active} error={source.error} empty={catalogModels.length === 0} refreshing={liveModels.refreshing} disabled={busy || !provider} onRefresh={refreshModels} />
+      <small>Pick a model above, or type any model ID this provider supports. Uses the key above, or the saved one.</small>
     </div>
     <label className="field"><span>API key{selected?.env_var ? ` · ${selected.env_var}` : ''}</span><input type="password" aria-label={selected?.env_var ? `API key · ${selected.env_var}` : 'API key'} autoComplete="off" spellCheck="false" value={apiKey} onChange={event => setApiKey(event.target.value)} placeholder={selected?.configured ? 'Leave blank to keep current key' : 'Paste API key'} /></label>
     <label className="persist-toggle"><input type="checkbox" checked={persist} onChange={event => setPersist(event.target.checked)} /><span>Write to repo-root .env</span></label>

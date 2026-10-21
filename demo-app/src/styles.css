@@ -1659,3 +1659,6 @@ adapted from the terminal-first provider flow */
   border-color: #1556a1;
   background: #1e66bc;
 }
+
+.model-source-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.model-source-badge[data-source="live"] { color: var(--accent, #2563eb); }

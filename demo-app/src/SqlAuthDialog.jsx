@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { modelsForProvider } from './llmCatalog.js'
+import ModelSourceRow from './ModelSourceRow.jsx'
+import { useLiveModels } from './useLiveModels.js'
 
 const jsonOptions = (method, body) => ({
   method,
@@ -19,6 +21,7 @@ export default function SqlAuthDialog({ open, api, status, onStatusChange, onClo
   const [busy, setBusy] = useState('')
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const liveModels = useLiveModels((path, body) => api(path, jsonOptions('POST', body)))
 
   useEffect(() => {
     setCurrentStatus(status || { configured: false, providers })
@@ -46,6 +49,12 @@ export default function SqlAuthDialog({ open, api, status, onStatusChange, onClo
     setEndpointId(item.default_endpoint_id || '')
     setMessage('')
     setError('')
+    liveModels.reset()
+  }
+
+  const refreshModels = async () => {
+    setError('')
+    setModel(await liveModels.refresh({ provider, apiKey, endpointId, workspaceId }, model))
   }
 
   const submit = async method => {
@@ -103,7 +112,8 @@ export default function SqlAuthDialog({ open, api, status, onStatusChange, onClo
     onClose()
   }
 
-  const catalogModels = modelsForProvider(selectedProvider, provider)
+  const source = liveModels.forProvider(provider, modelsForProvider(selectedProvider, provider))
+  const catalogModels = source.models
   const selectedEndpoint = selectedProvider?.endpoints?.find(item => item.id === endpointId)
 
   return <div className="flow-provider-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) close() }}>
@@ -124,7 +134,8 @@ export default function SqlAuthDialog({ open, api, status, onStatusChange, onClo
             {catalogModels.length > 0 && <ul className="model-suggestion-list" aria-label="Suggested models">{catalogModels.map(item => <li key={item}><button type="button" className={model === item ? 'active' : ''} aria-pressed={model === item} onClick={() => setModel(item)}>{item}</button></li>)}</ul>}
             <input aria-label="Model" list="session-model-catalog" value={model} onChange={event => setModel(event.target.value)} placeholder="Enter a model ID" autoComplete="off" spellCheck="false" />
             <datalist id="session-model-catalog">{catalogModels.map(item => <option key={item} value={item} />)}</datalist>
-            <small>Pick a catalog model above, or type any model ID this provider supports.</small>
+            <ModelSourceRow active={source.active} error={source.error} empty={catalogModels.length === 0} refreshing={liveModels.refreshing} disabled={Boolean(busy) || !provider || (selectedEndpoint?.requires_workspace && !workspaceId.trim())} onRefresh={refreshModels} />
+            <small>Pick a model above, or type any model ID this provider supports. Enter your API key first to load the live list.</small>
           </div>
           {selectedProvider?.endpoints?.length > 0 && <label className="field"><span>API region</span><select aria-label="API region" value={endpointId} onChange={event => setEndpointId(event.target.value)}>{selectedProvider.endpoints.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select><small>Choose the region where this API key was created.</small></label>}
           {selectedEndpoint?.requires_workspace && <label className="field workspace-id-field"><span>Workspace ID</span><input aria-label="Workspace ID" autoComplete="off" spellCheck="false" value={workspaceId} onChange={event => setWorkspaceId(event.target.value)} placeholder="e.g. llm-xxxxxxxx" /><small>Found on the Alibaba Cloud Model Studio workspace details page.</small></label>}
