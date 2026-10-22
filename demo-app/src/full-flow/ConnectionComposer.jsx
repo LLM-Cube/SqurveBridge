@@ -2,7 +2,6 @@ import { memo, useCallback, useMemo } from 'react'
 import ActorWorkflow from './ActorWorkflow.jsx'
 import IntegrationProvenance from './IntegrationProvenance.jsx'
 import { buildReadyKeys, configKey } from './model.js'
-import './connection-composer.css'
 
 const MemoActorWorkflow = memo(ActorWorkflow)
 const MemoIntegrationProvenance = memo(IntegrationProvenance)
