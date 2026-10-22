@@ -13,10 +13,12 @@ import {
   pushQuestionHistory,
   schemaToCompletion,
   stagesFromTrace,
+  databaseGroups,
+  defaultDatabase,
+  initialBenchmark,
 } from './queryModel.js'
 
 const PLACEHOLDER_STEP_MS = 900
-const labelSlug = value => String(value || '').trim().toLowerCase().replace(/[_\s]+/g, '-')
 
 const stageStatusLabel = (status, t) => (
   status === 'failed'
@@ -245,9 +247,9 @@ export default function QueryWorkspace({
 
   useEffect(() => {
     if (selectedDb || databases.length === 0) return
-    const preferred = labelSlug(focusedDatabase)
-    const match = databases.find(item => item.benchmark === preferred) || databases[0]
-    if (match) setSelectedDb(match.id)
+    const groups = databaseGroups(databases)
+    const opening = defaultDatabase(groups.find(group => group.id === initialBenchmark(groups, '', focusedDatabase)))
+    if (opening) setSelectedDb(opening)
   }, [databases, selectedDb, focusedDatabase])
 
   useEffect(() => {

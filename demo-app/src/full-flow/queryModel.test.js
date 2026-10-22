@@ -15,6 +15,8 @@ import {
   schemaToCompletion,
   stagesFromTrace,
   databaseGroups,
+  defaultDatabase,
+  filterDatabases,
   initialBenchmark,
 } from './queryModel.js'
 
@@ -192,4 +194,26 @@ test('the first benchmark shown owns the selected database, else follows Compose
   assert.equal(initialBenchmark(groups, '', 'BIRD'), 'bird')
   assert.equal(initialBenchmark(groups, '', 'Unknown'), 'spider')
   assert.equal(initialBenchmark([], '', 'Spider'), '')
+})
+
+test('a benchmark opens on a well-known database, else its first', () => {
+  const [spider, bird] = databaseGroups([
+    { id: 'aan_1', benchmark: 'spider' },
+    { id: 'concert_singer', benchmark: 'spider' },
+    { id: 'bird__formula_1', benchmark: 'bird' },
+  ])
+  assert.equal(defaultDatabase(spider), 'concert_singer')
+  assert.equal(defaultDatabase(bird), 'bird__formula_1')
+  assert.equal(defaultDatabase(undefined), '')
+})
+
+test('filtering keeps matching databases and the selected one', () => {
+  const [spider] = databaseGroups([
+    { id: 'aan_1', benchmark: 'spider' },
+    { id: 'concert_singer', benchmark: 'spider' },
+    { id: 'singer', benchmark: 'spider' },
+  ])
+  assert.deepEqual(filterDatabases(spider.databases, 'SING').map(item => item.id), ['concert_singer', 'singer'])
+  assert.deepEqual(filterDatabases(spider.databases, 'sing', 'aan_1').map(item => item.id), ['aan_1', 'concert_singer', 'singer'])
+  assert.equal(filterDatabases(spider.databases, '  ').length, 3)
 })

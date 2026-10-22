@@ -241,3 +241,19 @@ export function initialBenchmark(groups, selectedDb, focusedDatabase) {
   const focused = groups.find(group => group.id && benchmarkKey(group.id) === benchmarkKey(focusedDatabase))
   return (focused || groups[0])?.id ?? ''
 }
+
+// A well-known database to open a benchmark on, where alphabetical order would pick an obscure one.
+const PREFERRED_DATABASES = { spider: 'concert_singer' }
+
+export function defaultDatabase(group) {
+  const preferred = PREFERRED_DATABASES[group?.id]
+  const databases = group?.databases || []
+  return (databases.find(item => item.id === preferred) || databases[0])?.id || ''
+}
+
+/** A benchmark's databases whose name contains the term; the selected one always stays listed. */
+export function filterDatabases(databases, term, selectedDb = '') {
+  const needle = String(term || '').trim().toLowerCase()
+  if (!needle) return databases || []
+  return (databases || []).filter(item => item.id === selectedDb || item.name.toLowerCase().includes(needle))
+}

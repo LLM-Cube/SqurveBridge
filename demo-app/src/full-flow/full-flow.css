@@ -4950,7 +4950,7 @@
 
 .flow-demo .query-layout {
   display: grid;
-  grid-template-columns: 272px minmax(0, 1fr);
+  grid-template-columns: 320px minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
@@ -6255,7 +6255,7 @@
 
 @media (max-width: 1180px) {
   .flow-demo .query-layout {
-    grid-template-columns: 232px minmax(0, 1fr);
+    grid-template-columns: 280px minmax(0, 1fr);
   }
 }
 

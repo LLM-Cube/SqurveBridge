@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { databaseGroups, initialBenchmark } from './queryModel.js'
+import { databaseGroups, defaultDatabase, filterDatabases, initialBenchmark } from './queryModel.js'
+
+// Below this many databases a plain list is easy enough to scan.
+const FILTER_THRESHOLD = 12
 
 const matches = (value, term) => String(value || '').toLowerCase().includes(term)
 
@@ -44,6 +47,8 @@ export default function SchemaTree({
   const groups = useMemo(() => databaseGroups(databases), [databases])
   const [benchmark, setBenchmark] = useState(() => initialBenchmark(groups, selectedDb, focusedDatabase))
   const activeGroup = groups.find(group => group.id === benchmark) || null
+  const [databaseTerm, setDatabaseTerm] = useState('')
+  const listedDatabases = filterDatabases(activeGroup?.databases, databaseTerm, selectedDb)
 
   useEffect(() => {
     // Follow a database chosen elsewhere (a replay) and fill in once databases load.
@@ -55,8 +60,9 @@ export default function SchemaTree({
   // Switching benchmark opens its first database, so the schema always matches the picker.
   const chooseBenchmark = next => {
     setBenchmark(next)
-    const first = groups.find(group => group.id === next)?.databases[0]
-    if (first && first.id !== selectedDb) onSelectDb?.(first.id)
+    setDatabaseTerm('')
+    const opening = defaultDatabase(groups.find(group => group.id === next))
+    if (opening && opening !== selectedDb) onSelectDb?.(opening)
   }
 
   const tables = schema?.tables || []
@@ -133,15 +139,29 @@ export default function SchemaTree({
         </select>
       </label>
 
+      {(activeGroup?.databases.length || 0) > FILTER_THRESHOLD ? (
+        <input
+          type="search"
+          className="query-schema-search"
+          value={databaseTerm}
+          placeholder={t('query.filterDatabases', { count: activeGroup.databases.length })}
+          aria-label={t('query.filterDatabasesLabel')}
+          onChange={event => setDatabaseTerm(event.target.value)}
+        />
+      ) : null}
+
       <label className="query-schema-database">
-        <span>{t('query.database')}</span>
+        <span>
+          {t('query.database')}
+          {databaseTerm.trim() ? ` · ${t('query.databaseMatches', { count: listedDatabases.length })}` : ''}
+        </span>
         <select
           value={selectedDb}
           aria-label={t('query.database')}
           onChange={event => onSelectDb?.(event.target.value)}
         >
           <option value="">{t('query.selectDatabase')}</option>
-          {(activeGroup?.databases || []).map(database => (
+          {listedDatabases.map(database => (
             <option key={database.id} value={database.id}>
               {database.name}
             </option>
