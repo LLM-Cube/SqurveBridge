@@ -525,6 +525,7 @@ export default function QueryWorkspace({
           databases={databases}
           selectedDb={selectedDb}
           onSelectDb={setSelectedDb}
+          focusedDatabase={focusedDatabase}
           schema={schemaEntry}
           hits={hits}
           hitsDismissed={hitsDismissed}

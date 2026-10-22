@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { databaseGroups, initialBenchmark } from './queryModel.js'
 
 const matches = (value, term) => String(value || '').toLowerCase().includes(term)
 
@@ -24,6 +25,7 @@ export default function SchemaTree({
   databases = [],
   selectedDb = '',
   onSelectDb,
+  focusedDatabase = '',
   schema = null,
   hits = null,
   hitsDismissed = false,
@@ -38,15 +40,24 @@ export default function SchemaTree({
   const normalizedTerm = term.trim().toLowerCase()
   const searching = normalizedTerm.length > 0
 
-  const groups = useMemo(() => {
-    const byBenchmark = new Map()
-    for (const database of databases) {
-      const key = database.benchmark || 'other'
-      if (!byBenchmark.has(key)) byBenchmark.set(key, [])
-      byBenchmark.get(key).push(database)
-    }
-    return [...byBenchmark.entries()]
-  }, [databases])
+  // Pick a benchmark first, then one of its databases.
+  const groups = useMemo(() => databaseGroups(databases), [databases])
+  const [benchmark, setBenchmark] = useState(() => initialBenchmark(groups, selectedDb, focusedDatabase))
+  const activeGroup = groups.find(group => group.id === benchmark) || null
+
+  useEffect(() => {
+    // Follow a database chosen elsewhere (a replay) and fill in once databases load.
+    const owner = groups.find(group => group.databases.some(item => item.id === selectedDb))
+    if (owner && owner.id !== benchmark) setBenchmark(owner.id)
+    else if (!activeGroup && groups.length) setBenchmark(initialBenchmark(groups, selectedDb, focusedDatabase))
+  }, [groups, selectedDb])
+
+  // Switching benchmark opens its first database, so the schema always matches the picker.
+  const chooseBenchmark = next => {
+    setBenchmark(next)
+    const first = groups.find(group => group.id === next)?.databases[0]
+    if (first && first.id !== selectedDb) onSelectDb?.(first.id)
+  }
 
   const tables = schema?.tables || []
   const visibleTables = useMemo(() => {
@@ -105,6 +116,24 @@ export default function SchemaTree({
       </header>
 
       <label className="query-schema-database">
+        <span>{t('query.benchmark')}</span>
+        <select
+          value={activeGroup?.id ?? ''}
+          aria-label={t('query.benchmark')}
+          onChange={event => chooseBenchmark(event.target.value)}
+        >
+          {groups.map(group => (
+            <option key={group.id || 'other'} value={group.id}>
+              {t('query.benchmarkOption', {
+                name: group.label || t('query.otherDatabases'),
+                count: group.databases.length,
+              })}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="query-schema-database">
         <span>{t('query.database')}</span>
         <select
           value={selectedDb}
@@ -112,14 +141,10 @@ export default function SchemaTree({
           onChange={event => onSelectDb?.(event.target.value)}
         >
           <option value="">{t('query.selectDatabase')}</option>
-          {groups.map(([benchmark, items]) => (
-            <optgroup key={benchmark} label={benchmark}>
-              {items.map(database => (
-                <option key={database.id} value={database.id}>
-                  {database.id}
-                </option>
-              ))}
-            </optgroup>
+          {(activeGroup?.databases || []).map(database => (
+            <option key={database.id} value={database.id}>
+              {database.name}
+            </option>
           ))}
         </select>
       </label>
