@@ -52,9 +52,18 @@ function renderDemo(locale = 'en-US', capabilities = baseCapabilities, overrides
   }))
 }
 
+const EXPERIMENT_SECTIONS = ['Compose', 'Run', 'Compare & History']
+
+// Compose, Run and Compare & History are sections of the one Experiment page.
 async function goToStep(user, name) {
   const tabs = screen.getByRole('navigation', { name: 'Workflow stages' })
-  await user.click(within(tabs).getByRole('button', { name }))
+  if (!EXPERIMENT_SECTIONS.includes(name)) {
+    await user.click(within(tabs).getByRole('button', { name }))
+    return
+  }
+  await user.click(within(tabs).getByRole('button', { name: 'Experiment' }))
+  const sections = screen.getByRole('navigation', { name: 'Experiment steps' })
+  await user.click(within(sections).getByRole('button', { name: new RegExp(name) }))
 }
 
 test.afterEach(() => {
@@ -84,8 +93,8 @@ test('renders five bilingual modules in process order', () => {
   const tabs = screen.getByRole('navigation', { name: 'Workflow stages' })
   assert.deepEqual(
     within(tabs).getAllByRole('button').map(button => button.textContent),
-    ['Studio', 'Compose', 'Run', 'Compare & History', 'Query'],
-    'compose, run and compare & history sit together; query stands apart',
+    ['Studio', 'Experiment', 'Query'],
+    'compose, run and compare & history are one experiment page',
   )
   assert.ok(document.querySelector('.agent-chat-body'))
   assert.ok(screen.getByTestId('pi-backend-badge'))
@@ -113,20 +122,32 @@ test('switches process pages from the stage tabs', async () => {
   const user = userEvent.setup()
 
   await goToStep(user, 'Compose')
-  assert.equal(screen.getByTestId('flow-stage').getAttribute('data-active-step'), 'compose')
-  assert.equal(document.querySelector('#compose h2')?.textContent, 'Workflow Composition')
+  const stage = screen.getByTestId('flow-stage')
+  assert.equal(stage.getAttribute('data-active-step'), 'experiment')
+  assert.equal(stage.getAttribute('data-active-section'), 'compose')
   assert.equal(window.location.hash, '#compose')
 
-  await goToStep(user, 'Run')
-  assert.equal(screen.getByTestId('flow-stage').getAttribute('data-active-step'), 'board')
+  // Compose, Run and Compare & History read top to bottom on one page.
+  const page = screen.getByTestId('experiment-page')
+  assert.deepEqual(
+    [...page.querySelectorAll('.experiment-section')].map(section => section.dataset.section),
+    ['compose', 'board', 'evidence'],
+  )
+  assert.equal(document.querySelector('#compose h2')?.textContent, 'Workflow Composition')
   assert.equal(document.querySelector('#board h2')?.textContent, 'Experiment Board')
 
+  await goToStep(user, 'Run')
+  assert.equal(stage.getAttribute('data-active-section'), 'board')
+  assert.equal(window.location.hash, '#board')
+
   await goToStep(user, 'Compare & History')
-  assert.equal(screen.getByTestId('flow-stage').getAttribute('data-active-step'), 'evidence')
+  assert.equal(stage.getAttribute('data-active-section'), 'evidence')
   const tabs = screen.getByRole('navigation', { name: 'Workflow stages' })
+  assert.equal(within(tabs).getByRole('button', { name: 'Experiment' }).getAttribute('aria-current'), 'page')
+  const sections = screen.getByRole('navigation', { name: 'Experiment steps' })
   assert.equal(
-    within(tabs).getByRole('button', { name: 'Compare & History' }).getAttribute('aria-current'),
-    'page',
+    within(sections).getByRole('button', { name: /Compare & History/ }).getAttribute('aria-current'),
+    'step',
   )
 })
 
@@ -141,7 +162,7 @@ test('maps legacy process hashes onto the four-step flow', () => {
     postJson: async () => ({}),
     onConfigureSql: () => {},
   }))
-  assert.equal(screen.getByTestId('flow-stage').getAttribute('data-active-step'), 'board')
+  assert.equal(screen.getByTestId('flow-stage').getAttribute('data-active-section'), 'board')
   cleanup()
   localStorage.clear()
   window.history.replaceState(null, '', '#inspect')
@@ -153,7 +174,7 @@ test('maps legacy process hashes onto the four-step flow', () => {
     postJson: async () => ({}),
     onConfigureSql: () => {},
   }))
-  assert.equal(screen.getByTestId('flow-stage').getAttribute('data-active-step'), 'evidence')
+  assert.equal(screen.getByTestId('flow-stage').getAttribute('data-active-section'), 'evidence')
   cleanup()
   localStorage.clear()
   window.history.replaceState(null, '', '#archive')
@@ -165,7 +186,7 @@ test('maps legacy process hashes onto the four-step flow', () => {
     postJson: async () => ({}),
     onConfigureSql: () => {},
   }))
-  assert.equal(screen.getByTestId('flow-stage').getAttribute('data-active-step'), 'evidence')
+  assert.equal(screen.getByTestId('flow-stage').getAttribute('data-active-section'), 'evidence')
   cleanup()
   localStorage.clear()
   window.history.replaceState(null, '', '#visualize')
@@ -177,7 +198,7 @@ test('maps legacy process hashes onto the four-step flow', () => {
     postJson: async () => ({}),
     onConfigureSql: () => {},
   }))
-  assert.equal(screen.getByTestId('flow-stage').getAttribute('data-active-step'), 'evidence')
+  assert.equal(screen.getByTestId('flow-stage').getAttribute('data-active-section'), 'evidence')
 })
 
 test('keeps functional controls and technical metadata readable', () => {
@@ -625,7 +646,9 @@ test('translates the process navigation and board controls', async () => {
 
   const tabs = screen.getByRole('navigation', { name: '工作流阶段' })
   assert.ok(tabs)
-  await user.click(within(tabs).getByRole('button', { name: '运行' }))
+  await user.click(within(tabs).getByRole('button', { name: '实验' }))
+  const sections = screen.getByRole('navigation', { name: '实验步骤' })
+  await user.click(within(sections).getByRole('button', { name: /运行/ }))
   assert.match(document.querySelector('#board').textContent, /参数工作台/)
   assert.match(document.querySelector('#board').textContent, /运行 Config|reproduce\/run\.py|本地 Demo/)
   assert.equal(document.querySelector('#board .diagnosis-workspace'), null)
@@ -723,7 +746,7 @@ test('expands archive charts inline without requesting raw files on hosted demo'
   await screen.findByRole('button', { name: 'Expand charts' })
   await user.click(screen.getByRole('button', { name: 'Expand charts' }))
 
-  assert.equal(screen.getByTestId('flow-stage').getAttribute('data-active-step'), 'evidence')
+  assert.equal(screen.getByTestId('flow-stage').getAttribute('data-active-section'), 'evidence')
   assert.equal(window.location.hash, '#evidence')
   assert.ok(screen.getByTestId('evidence-charts-panel'))
   await screen.findByText(/Archive run · run-archive-1/)

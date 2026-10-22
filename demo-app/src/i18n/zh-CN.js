@@ -8,6 +8,8 @@ export default {
   'header.configureLocalApi': '配置 LLM',
   'process.configure': '工作室',
   'process.compose': '编排',
+  'process.experiment': '实验',
+  'experiment.sections': '实验步骤',
   'process.query': '查询',
   'process.board': '运行',
   'process.evidence': '对比与历史',

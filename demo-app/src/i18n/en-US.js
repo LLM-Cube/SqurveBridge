@@ -8,6 +8,8 @@ export default {
   'header.configureLocalApi': 'Configure LLM',
   'process.configure': 'Studio',
   'process.compose': 'Compose',
+  'process.experiment': 'Experiment',
+  'experiment.sections': 'Experiment steps',
   'process.query': 'Query',
   'process.board': 'Run',
   'process.evidence': 'Compare & History',

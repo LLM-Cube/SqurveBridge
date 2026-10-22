@@ -17,7 +17,7 @@ import {
   toggleConnection,
   withConnectionKeys,
 } from './model.js'
-import { PROCESS_GROUPS, PROCESS_STEPS, resolveProcessStep } from './processSteps.js'
+import { EXPERIMENT_SECTIONS, PROCESS_STEPS, resolveProcessStep, resolveSection } from './processSteps.js'
 import { INITIAL_RUN_STATE } from './RunWorkspace.jsx'
 import { displayNamesFor } from './resultsModel.js'
 import { normalizeProposal, pageContextFor } from '../agentActions.js'
@@ -72,6 +72,11 @@ export default function FullFlowDemo({
     window.localStorage.getItem('squrve-demo-locale'),
   ))
   const [activeStep, setActiveStep] = useState(() => resolveProcessStep(window.location.hash))
+  // Which part of the experiment page to bring into view; the counter re-scrolls on repeat clicks.
+  const [sectionRequest, setSectionRequest] = useState(() => ({
+    section: resolveSection(window.location.hash),
+    id: 0,
+  }))
   const [selectedConnections, setSelectedConnections] = useState([
     { method: METHODS[0], database: DATABASES[0] },
   ])
@@ -124,7 +129,10 @@ export default function FullFlowDemo({
   }, [shellLayout])
 
   useEffect(() => {
-    const syncFromHash = () => setActiveStep(resolveProcessStep(window.location.hash))
+    const syncFromHash = () => {
+      setActiveStep(resolveProcessStep(window.location.hash))
+      setSectionRequest(current => ({ section: resolveSection(window.location.hash), id: current.id + 1 }))
+    }
     window.addEventListener('hashchange', syncFromHash)
     return () => window.removeEventListener('hashchange', syncFromHash)
   }, [])
@@ -135,11 +143,23 @@ export default function FullFlowDemo({
     if (workspaceBodyRef.current) workspaceBodyRef.current.scrollTop = 0
   }, [activeStep])
 
-  const navigateToStep = useCallback(step => {
-    const next = resolveProcessStep(step)
+  useEffect(() => {
+    // Runs after the page reset above, so a section link lands on its section.
+    if (!sectionRequest.section || activeStep !== 'experiment') return
+    workspaceBodyRef.current
+      ?.querySelector(`[data-section="${sectionRequest.section}"]`)
+      ?.scrollIntoView?.({ block: 'start', behavior: 'smooth' })
+  }, [sectionRequest, activeStep])
+
+  // Accepts a step or an experiment section (compose, board, evidence).
+  const navigateToStep = useCallback(target => {
+    const next = resolveProcessStep(target)
+    const section = resolveSection(target)
     setActiveStep(next)
-    if (window.location.hash !== `#${next}`) {
-      window.history.replaceState(null, '', `#${next}`)
+    setSectionRequest(current => ({ section, id: current.id + 1 }))
+    const hash = `#${section || next}`
+    if (window.location.hash !== hash) {
+      window.history.replaceState(null, '', hash)
     }
   }, [])
 
@@ -285,8 +305,22 @@ export default function FullFlowDemo({
         t={t}
       />
     ),
-    compose: (
-      <>
+    experiment: (
+      <div className="experiment-page" data-testid="experiment-page">
+        <nav className="experiment-section-nav" aria-label={t('experiment.sections')}>
+          {EXPERIMENT_SECTIONS.map((section, index) => (
+            <button
+              key={section}
+              type="button"
+              aria-current={sectionRequest.section === section ? 'step' : undefined}
+              onClick={() => navigateToStep(section)}
+            >
+              <span aria-hidden="true">{index + 1}</span>
+              {t(`process.${section}`)}
+            </button>
+          ))}
+        </nav>
+      <div className="experiment-section" data-section="compose">
       <MemoExperimentGrid
         api={api}
         configs={configs}
@@ -314,28 +348,8 @@ export default function FullFlowDemo({
         onRemoveVariant={onRemoveVariant}
         t={t}
       />
-      </>
-    ),
-    query: (
-      <MemoQueryWorkspace
-        databases={databases}
-        capabilities={capabilities}
-        focusedConfig={focusedConfig}
-        focusedMethod={focusedMethod}
-        focusedDatabase={focusedDatabase}
-        sqlAuth={sqlAuth}
-        credentialMode={credentialMode}
-        onConfigureSql={onConfigureSql}
-        postJson={postJson}
-        api={api}
-        adoptedSql={adoptedSql}
-        onAdoptedSqlHandled={onAdoptedSqlHandled}
-        onAskPi={agentEnabled ? askPiFromQuery : undefined}
-        prefill={queryPrefill}
-        t={t}
-      />
-    ),
-    board: (
+      </div>
+      <div className="experiment-section" data-section="board">
       <MemoBoardWorkspace
         selectedConnections={connections}
         configs={configs}
@@ -358,8 +372,8 @@ export default function FullFlowDemo({
         variants={variants}
         t={t}
       />
-    ),
-    evidence: (
+      </div>
+      <div className="experiment-section" data-section="evidence">
       <MemoEvidenceHub
         pageId="evidence"
         capabilities={capabilities}
@@ -375,6 +389,27 @@ export default function FullFlowDemo({
         connections={connections}
         experimentId={experimentId}
         onReplay={replayInQuery}
+        t={t}
+      />
+      </div>
+      </div>
+    ),
+    query: (
+      <MemoQueryWorkspace
+        databases={databases}
+        capabilities={capabilities}
+        focusedConfig={focusedConfig}
+        focusedMethod={focusedMethod}
+        focusedDatabase={focusedDatabase}
+        sqlAuth={sqlAuth}
+        credentialMode={credentialMode}
+        onConfigureSql={onConfigureSql}
+        postJson={postJson}
+        api={api}
+        adoptedSql={adoptedSql}
+        onAdoptedSqlHandled={onAdoptedSqlHandled}
+        onAskPi={agentEnabled ? askPiFromQuery : undefined}
+        prefill={queryPrefill}
         t={t}
       />
     ),
@@ -512,20 +547,17 @@ export default function FullFlowDemo({
               </div>
             </header>
             <nav className="agent-stage-tabs" aria-label={t('shell.stageTabs')}>
-              {PROCESS_GROUPS.map((group, index) => [
-                index > 0 ? <span key={`divider-${index}`} className="agent-stage-divider" aria-hidden="true" /> : null,
-                ...group.map(step => (
-                  <button
-                    key={step}
-                    type="button"
-                    className={activeStep === step ? 'active' : ''}
-                    aria-current={activeStep === step ? 'page' : undefined}
-                    onClick={() => navigateToStep(step)}
-                  >
-                    {t(`process.${step}`)}
-                  </button>
-                )),
-              ])}
+              {PROCESS_STEPS.map(step => (
+                <button
+                  key={step}
+                  type="button"
+                  className={activeStep === step ? 'active' : ''}
+                  aria-current={activeStep === step ? 'page' : undefined}
+                  onClick={() => navigateToStep(step)}
+                >
+                  {t(`process.${step}`)}
+                </button>
+              ))}
             </nav>
           <div className="agent-live-workspace-head">
             <h2>
@@ -552,6 +584,7 @@ export default function FullFlowDemo({
             className="agent-live-workspace-body"
             data-testid="flow-stage"
             data-active-step={activeStep}
+            data-active-section={activeStep === 'experiment' ? sectionRequest.section || 'compose' : undefined}
           >
             {PROCESS_STEPS.map(step => (
               <div

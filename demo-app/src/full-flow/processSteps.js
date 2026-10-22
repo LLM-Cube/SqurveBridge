@@ -1,7 +1,7 @@
-// Studio introduces; compose → run → compare & history is one experiment flow;
-// Query stands apart for single questions and replays.
-export const PROCESS_GROUPS = [['configure'], ['compose', 'board', 'evidence'], ['query']]
-export const PROCESS_STEPS = PROCESS_GROUPS.flat()
+// Studio introduces; the experiment is one page that reads top to bottom as
+// compose → run → compare & history; Query stands apart for single questions.
+export const EXPERIMENT_SECTIONS = ['compose', 'board', 'evidence']
+export const PROCESS_STEPS = ['configure', 'experiment', 'query']
 
 const LEGACY_STEP_MAP = {
   run: 'board',
@@ -12,8 +12,19 @@ const LEGACY_STEP_MAP = {
   archive: 'evidence',
 }
 
-export function resolveProcessStep(hashOrId, fallback = PROCESS_STEPS[0]) {
+const normalize = hashOrId => {
   const value = String(hashOrId || '').replace(/^#/, '')
-  const mapped = LEGACY_STEP_MAP[value] || value
-  return PROCESS_STEPS.includes(mapped) ? mapped : fallback
+  return LEGACY_STEP_MAP[value] || value
+}
+
+/** The experiment section a hash or id points at, or null. */
+export function resolveSection(hashOrId) {
+  const value = normalize(hashOrId)
+  return EXPERIMENT_SECTIONS.includes(value) ? value : null
+}
+
+export function resolveProcessStep(hashOrId, fallback = PROCESS_STEPS[0]) {
+  const value = normalize(hashOrId)
+  if (EXPERIMENT_SECTIONS.includes(value)) return 'experiment'
+  return PROCESS_STEPS.includes(value) ? value : fallback
 }
