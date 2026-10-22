@@ -6377,11 +6377,14 @@
 .flow-demo .experiment-grid table { width: auto; border-collapse: separate; border-spacing: 2px; font-size: 12px; }
 .flow-demo .experiment-grid th button { border: 0; padding: 4px 6px; background: transparent; color: #6b6152; font: inherit; font-weight: 600; white-space: nowrap; }
 .flow-demo .experiment-grid th button:hover { color: #2e2618; text-decoration: underline; }
-.flow-demo .experiment-grid td { min-width: 76px; height: 36px; border-radius: 4px; background: #efe9de; text-align: center; }
+.flow-demo .experiment-grid td { min-width: 112px; height: 40px; padding: 0 4px; border-radius: 4px; background: #efe9de; text-align: center; white-space: nowrap; }
 .flow-demo .experiment-grid td[data-selected="true"] { background: #cde2fb; box-shadow: inset 0 0 0 1.5px #2a78d6; }
-.flow-demo .experiment-grid td label { display: flex; align-items: center; justify-content: center; gap: 6px; height: 100%; padding: 0 6px; color: #2e2618; cursor: pointer; font-variant-numeric: tabular-nums; }
+.flow-demo .experiment-grid td label { display: flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 6px; height: 100%; padding: 0 4px; color: #2e2618; cursor: pointer; font-variant-numeric: tabular-nums; }
 .flow-demo .experiment-grid td input { accent-color: #2a78d6; }
-.flow-demo .experiment-grid .experiment-grid-na { color: #9a8f7d; }
+.flow-demo .experiment-grid .experiment-grid-na { color: #9a8f7d; font-size: 11px; white-space: nowrap; }
+.flow-demo .experiment-grid-cell { display: flex; align-items: center; justify-content: center; gap: 6px; height: 100%; }
+.flow-demo .experiment-grid-focus { flex: 0 0 auto; border: 1px solid #c9b48f; border-radius: 999px; padding: 1px 8px; background: #fffdf7; color: #6f4a1b; font: inherit; font-size: 11px; white-space: nowrap; cursor: pointer; }
+.flow-demo .experiment-grid-focus[aria-pressed="true"] { background: #6f4a1b; border-color: #6f4a1b; color: #fbf8f1; }
 
 .flow-demo .results-scatter { display: grid; gap: 8px; margin: 0; }
 .flow-demo .results-scatter figcaption { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; color: var(--viz-ink-muted); font-size: 12px; }

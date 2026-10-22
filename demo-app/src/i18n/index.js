@@ -8,9 +8,9 @@ const messages = {
   'zh-CN': zhCN,
 }
 
-export function detectLocale(navigatorLanguage = '', storedLocale = '') {
-  if (SUPPORTED_LOCALES.includes(storedLocale)) return storedLocale
-  return String(navigatorLanguage).toLowerCase().startsWith('zh') ? 'zh-CN' : 'en-US'
+// Chinese is the default; a locale the user chose earlier always wins.
+export function detectLocale(storedLocale = '') {
+  return SUPPORTED_LOCALES.includes(storedLocale) ? storedLocale : 'zh-CN'
 }
 
 export function translate(locale, key, params = {}) {

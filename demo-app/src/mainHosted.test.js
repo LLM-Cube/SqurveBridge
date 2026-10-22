@@ -24,6 +24,7 @@ test.after(() => {
 })
 
 test('hosted App exposes session SQL configuration instead of local env configuration', async () => {
+  window.localStorage.setItem('squrve-demo-locale', 'en-US')
   const providers = [{ id: 'qwen', models: ['qwen-plus'], default_model: 'qwen-plus' }]
   const matrix = JSON.parse(fs.readFileSync(path.join(root, 'config/reproduce_matrix.json'), 'utf8'))
   const configs = matrix.databases.flatMap(database => matrix.methods.map(method => {
@@ -122,6 +123,7 @@ test('hosted App exposes session SQL configuration instead of local env configur
 })
 
 test('local App renders the same full-flow surface as the hosted deployment', async () => {
+  window.localStorage.setItem('squrve-demo-locale', 'en-US')
   const responses = {
     '/api/health': {
       status: 'ok',
@@ -181,6 +183,7 @@ test('local App renders the same full-flow surface as the hosted deployment', as
 })
 
 test('does not expose the local console while capabilities are pending', async () => {
+  window.localStorage.setItem('squrve-demo-locale', 'en-US')
   let resolveFetch
   globalThis.fetch = () => new Promise(resolve => { resolveFetch = resolve })
   render(React.createElement(HostedApp))
@@ -191,6 +194,7 @@ test('does not expose the local console while capabilities are pending', async (
 })
 
 test('shows a neutral boot error instead of falling back to the local console', async () => {
+  window.localStorage.setItem('squrve-demo-locale', 'en-US')
   globalThis.fetch = async () => { throw new Error('offline') }
   render(React.createElement(HostedApp))
   assert.ok(await screen.findByRole('alert'))

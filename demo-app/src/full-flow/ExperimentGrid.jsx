@@ -87,31 +87,33 @@ export default function ExperimentGrid({
                     data-selected={cell.selected}
                     data-focused={cell.selected && row.method === focusedMethod && cell.database === focusedDatabase ? 'true' : undefined}
                   >
-                    {cell.runnable && !cell.installed ? (
-                      <span className="experiment-grid-na">{t('grid.notInstalled')}</span>
-                    ) : cell.runnable ? (
-                      <label>
-                        <input
-                          type="checkbox"
-                          checked={cell.selected}
-                          onChange={() => onToggleConnection?.(row.method, cell.database)}
-                          aria-label={`${row.method} × ${cell.database}`}
-                        />
-                        <span>{cell.score === null ? t('grid.noScore') : `${(cell.score * 100).toFixed(0)}%`}</span>
-                      </label>
-                    ) : null}
-                    {cell.runnable && cell.installed && cell.selected ? (
-                      <button
-                        type="button"
-                        className="experiment-grid-focus"
-                        aria-label={t('grid.focusCell', { method: row.method, database: cell.database })}
-                        aria-pressed={row.method === focusedMethod && cell.database === focusedDatabase}
-                        onClick={() => onFocusConnection?.(row.method, cell.database)}
-                      >
-                        {t('grid.focusCellAction')}
-                      </button>
-                    ) : (
+                    {!cell.runnable ? (
                       <span className="experiment-grid-na">{t('grid.noConfig')}</span>
+                    ) : !cell.installed ? (
+                      <span className="experiment-grid-na">{t('grid.notInstalled')}</span>
+                    ) : (
+                      <div className="experiment-grid-cell">
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={cell.selected}
+                            onChange={() => onToggleConnection?.(row.method, cell.database)}
+                            aria-label={`${row.method} × ${cell.database}`}
+                          />
+                          <span>{cell.score === null ? t('grid.noScore') : `${(cell.score * 100).toFixed(0)}%`}</span>
+                        </label>
+                        {cell.selected ? (
+                          <button
+                            type="button"
+                            className="experiment-grid-focus"
+                            aria-label={t('grid.focusCell', { method: row.method, database: cell.database })}
+                            aria-pressed={row.method === focusedMethod && cell.database === focusedDatabase}
+                            onClick={() => onFocusConnection?.(row.method, cell.database)}
+                          >
+                            {t('grid.focusCellAction')}
+                          </button>
+                        ) : null}
+                      </div>
                     )}
                   </td>
                 ))}

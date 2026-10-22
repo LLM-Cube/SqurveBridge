@@ -214,10 +214,7 @@ function App() {
   const [sqlAuthOpen, setSqlAuthOpen] = useState(false)
   const [localProviderOpen, setLocalProviderOpen] = useState(false)
   const [bootError, setBootError] = useState(false)
-  const [bootLocale] = useState(() => detectLocale(
-    navigator.language,
-    window.localStorage.getItem('squrve-demo-locale'),
-  ))
+  const [bootLocale] = useState(() => detectLocale(window.localStorage.getItem('squrve-demo-locale')))
   const hosted = deploymentTarget(capabilities) === 'hf-space'
   const sessionSqlAuth = hosted && featureEnabled(capabilities, 'session_sql_auth')
   const refresh = async () => {

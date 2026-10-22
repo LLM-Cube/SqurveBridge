@@ -657,3 +657,27 @@ test('a selected matrix cell opens its workflow from the matrix itself', async (
   // Only selected pairs have a workflow control; DINSQL × BIRD is not selected.
   assert.equal(within(grid).queryByRole('button', { name: 'Show the workflow of DINSQL × BIRD' }), null)
 })
+
+test('each matrix cell shows one state: no config, not installed, or its checkbox', async () => {
+  const configs = catalogWith([C3SQL_SPIDER]).filter(config => !(config.method === 'c3sql' && config.dataset === 'BIRD'))
+  renderDemo('en-US', {
+    reproduce_configs: configs.map(config => (config.dataset === 'AmbiDB' ? { ...config, installed: false } : config)),
+  })
+  const user = userEvent.setup()
+  await goToStep(user, 'Compose')
+  const grid = screen.getByTestId('experiment-grid')
+  const rowOf = method => [...grid.querySelectorAll('tbody tr')].find(row => row.querySelector('th')?.textContent === method)
+  const cellOf = (method, database) => rowOf(method).children[DATABASES.indexOf(database) + 1]
+
+  const noConfig = cellOf('C3SQL', 'BIRD')
+  assert.equal(noConfig.textContent, 'no config')
+  assert.equal(noConfig.querySelectorAll('input, button').length, 0)
+
+  const notInstalled = cellOf('C3SQL', 'AmbiDB')
+  assert.equal(notInstalled.textContent, 'Dataset not installed')
+  assert.equal(notInstalled.querySelectorAll('input, button').length, 0)
+
+  const selectable = cellOf('C3SQL', 'Spider')
+  assert.equal(selectable.querySelectorAll('input').length, 1)
+  assert.doesNotMatch(selectable.textContent, /no config|not installed/)
+})

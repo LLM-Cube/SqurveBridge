@@ -67,10 +67,7 @@ export default function FullFlowDemo({
   const configs = capabilities?.reproduce_configs || []
   // A showcase deployment turns the Agent off on the server; the page then has no Agent pane.
   const agentEnabled = agentEnabledIn(capabilities)
-  const [locale, setLocale] = useState(() => detectLocale(
-    navigator.language,
-    window.localStorage.getItem('squrve-demo-locale'),
-  ))
+  const [locale, setLocale] = useState(() => detectLocale(window.localStorage.getItem('squrve-demo-locale')))
   const [activeStep, setActiveStep] = useState(() => resolveProcessStep(window.location.hash))
   // Which part of the experiment page to bring into view; the counter re-scrolls on repeat clicks.
   const [sectionRequest, setSectionRequest] = useState(() => ({

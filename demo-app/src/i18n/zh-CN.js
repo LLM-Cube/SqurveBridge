@@ -366,7 +366,7 @@ export default {
   'grid.selectRow': '切换本行所有可运行格子',
   'grid.selectColumn': '切换本列所有可运行格子',
   'grid.noScore': '未运行',
-  'grid.focusCellAction': '查看工作流',
+  'grid.focusCellAction': '工作流',
   'grid.focusCell': '查看 {method} × {database} 的工作流',
   'compose.workflowDescription': '选中一条组合后，在这里查看它的 Actor 工作流、切换已选组合，并设计变体。组合在上方实验矩阵中勾选。',
   'grid.noConfig': '无配置',
