@@ -78,11 +78,15 @@ test('renders five bilingual modules in process order', () => {
   assert.equal(screen.getByTestId('flow-stage').getAttribute('data-active-step'), 'configure')
   assert.deepEqual(
     [...document.querySelectorAll('.flow-module')].map(section => section.id),
-    ['configure', 'compose', 'query', 'board', 'evidence'],
+    ['configure', 'compose', 'board', 'evidence', 'query'],
   )
   assert.equal(document.querySelector('#configure h2')?.textContent, 'Methods & Databases')
   const tabs = screen.getByRole('navigation', { name: 'Workflow stages' })
-  assert.equal(within(tabs).getAllByRole('button').length, 5)
+  assert.deepEqual(
+    within(tabs).getAllByRole('button').map(button => button.textContent),
+    ['Studio', 'Compose', 'Run', 'Compare & History', 'Query'],
+    'compose, run and compare & history sit together; query stands apart',
+  )
   assert.ok(document.querySelector('.agent-chat-body'))
   assert.ok(screen.getByTestId('pi-backend-badge'))
   assert.match(screen.getByTestId('pi-backend-badge').textContent, /Pi/)
@@ -117,11 +121,11 @@ test('switches process pages from the stage tabs', async () => {
   assert.equal(screen.getByTestId('flow-stage').getAttribute('data-active-step'), 'board')
   assert.equal(document.querySelector('#board h2')?.textContent, 'Experiment Board')
 
-  await goToStep(user, 'Compare')
+  await goToStep(user, 'Compare & History')
   assert.equal(screen.getByTestId('flow-stage').getAttribute('data-active-step'), 'evidence')
   const tabs = screen.getByRole('navigation', { name: 'Workflow stages' })
   assert.equal(
-    within(tabs).getByRole('button', { name: 'Compare' }).getAttribute('aria-current'),
+    within(tabs).getByRole('button', { name: 'Compare & History' }).getAttribute('aria-current'),
     'page',
   )
 })
@@ -607,7 +611,7 @@ test('renders real board controls for config runs', async () => {
   assert.equal(screen.getByRole('button', { name: 'Run config' }).disabled, true)
   assert.equal(document.querySelector('#board .diagnosis-workspace'), null)
   assert.equal(document.querySelector('#board .improvement-workspace'), null)
-  await goToStep(user, 'Compare')
+  await goToStep(user, 'Compare & History')
   assert.match(document.querySelector('#evidence').textContent, /Compare & History|No archived runs/)
   assert.ok(screen.getByTestId('evidence-workspace'))
 })
@@ -711,7 +715,7 @@ test('expands archive charts inline without requesting raw files on hosted demo'
   }, { api })
   const user = userEvent.setup()
 
-  await goToStep(user, 'Compare')
+  await goToStep(user, 'Compare & History')
   await screen.findByText('run-archive-1')
   await screen.findByRole('button', { name: 'Open run' })
   await user.click(screen.getByRole('button', { name: 'Open run' }))

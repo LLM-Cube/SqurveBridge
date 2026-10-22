@@ -10,7 +10,7 @@ export default {
   'process.compose': 'Compose',
   'process.query': 'Query',
   'process.board': 'Run',
-  'process.evidence': 'Compare',
+  'process.evidence': 'Compare & History',
   'process.previous': 'Previous',
   'process.next': 'Next',
   'shell.newChat': 'New chat',

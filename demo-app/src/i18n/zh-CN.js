@@ -10,7 +10,7 @@ export default {
   'process.compose': '编排',
   'process.query': '查询',
   'process.board': '运行',
-  'process.evidence': '对比',
+  'process.evidence': '对比与历史',
   'process.previous': '上一步',
   'process.next': '下一步',
   'shell.newChat': '新对话',

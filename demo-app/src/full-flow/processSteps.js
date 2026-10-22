@@ -1,4 +1,7 @@
-export const PROCESS_STEPS = ['configure', 'compose', 'query', 'board', 'evidence']
+// Studio introduces; compose → run → compare & history is one experiment flow;
+// Query stands apart for single questions and replays.
+export const PROCESS_GROUPS = [['configure'], ['compose', 'board', 'evidence'], ['query']]
+export const PROCESS_STEPS = PROCESS_GROUPS.flat()
 
 const LEGACY_STEP_MAP = {
   run: 'board',

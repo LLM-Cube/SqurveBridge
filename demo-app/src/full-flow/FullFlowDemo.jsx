@@ -17,7 +17,7 @@ import {
   toggleConnection,
   withConnectionKeys,
 } from './model.js'
-import { PROCESS_STEPS, resolveProcessStep } from './processSteps.js'
+import { PROCESS_GROUPS, PROCESS_STEPS, resolveProcessStep } from './processSteps.js'
 import { INITIAL_RUN_STATE } from './RunWorkspace.jsx'
 import { displayNamesFor } from './resultsModel.js'
 import { normalizeProposal, pageContextFor } from '../agentActions.js'
@@ -512,17 +512,20 @@ export default function FullFlowDemo({
               </div>
             </header>
             <nav className="agent-stage-tabs" aria-label={t('shell.stageTabs')}>
-              {PROCESS_STEPS.map(step => (
-                <button
-                  key={step}
-                  type="button"
-                  className={activeStep === step ? 'active' : ''}
-                  aria-current={activeStep === step ? 'page' : undefined}
-                  onClick={() => navigateToStep(step)}
-                >
-                  {t(`process.${step}`)}
-                </button>
-              ))}
+              {PROCESS_GROUPS.map((group, index) => [
+                index > 0 ? <span key={`divider-${index}`} className="agent-stage-divider" aria-hidden="true" /> : null,
+                ...group.map(step => (
+                  <button
+                    key={step}
+                    type="button"
+                    className={activeStep === step ? 'active' : ''}
+                    aria-current={activeStep === step ? 'page' : undefined}
+                    onClick={() => navigateToStep(step)}
+                  >
+                    {t(`process.${step}`)}
+                  </button>
+                )),
+              ])}
             </nav>
           <div className="agent-live-workspace-head">
             <h2>

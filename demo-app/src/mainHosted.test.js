@@ -95,16 +95,16 @@ test('hosted App exposes session SQL configuration instead of local env configur
     [
       'Methods & Databases',
       'Workflow Composition',
-      'Interactive Query Workspace',
       'Experiment Board',
       'Compare & History',
+      'Interactive Query Workspace',
     ],
   )
   assert.match(document.body.textContent, /64 canonical configurations/i)
   assert.match(document.body.textContent, /Method × Database/i)
   const tabs = screen.getByRole('navigation', { name: 'Workflow stages' })
   assert.ok(within(tabs).getByRole('button', { name: 'Run' }))
-  assert.ok(within(tabs).getByRole('button', { name: 'Compare' }))
+  assert.ok(within(tabs).getByRole('button', { name: 'Compare & History' }))
   await waitFor(() => {
     // History mounts the archive catalog; charts load on demand when expanded.
     assert.ok(requested.some(path => String(path).startsWith('/api/archive')))

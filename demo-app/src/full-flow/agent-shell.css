@@ -260,6 +260,14 @@ html:has(.agent-shell) #root {
   transition: color 140ms ease;
 }
 
+.agent-stage-divider {
+  flex: 0 0 1px;
+  align-self: center;
+  height: 16px;
+  margin: 0 8px;
+  background: var(--shell-border);
+}
+
 .agent-stage-tabs button:hover {
   color: var(--shell-text);
 }
