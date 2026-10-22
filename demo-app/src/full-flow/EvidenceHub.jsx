@@ -104,6 +104,7 @@ export default function EvidenceHub({
             sampleMode={sampleMode}
             sampleSeed={sampleSeed}
             liveEvaluation={liveEvaluation}
+            postJson={postJson}
             onOpenRun={expandRun}
             onReplay={onReplay}
             t={t}

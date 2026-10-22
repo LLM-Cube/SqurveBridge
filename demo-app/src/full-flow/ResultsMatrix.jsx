@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { SAMPLE_LIMITS, resolveFocusedConfig } from './model.js'
 import { CostScatter, DiffPanel } from './ResultsInsights.jsx'
+import ComparisonPanel from './ComparisonPanel.jsx'
 import { groupedBars, heatmapRows, metricOptions, seriesSlot } from './resultsModel.js'
 import { experimentAxes } from './variantModel.js'
 
@@ -126,6 +127,7 @@ export default function ResultsMatrix({
   sampleMode = 'slice',
   sampleSeed = 42,
   liveEvaluation = false,
+  postJson,
   onOpenRun,
   onReplay,
   t,
@@ -281,6 +283,7 @@ export default function ResultsMatrix({
             t={t}
           />
           <DiffPanel api={api} matrix={matrix} onReplay={onReplay} t={t} />
+          <ComparisonPanel matrix={matrix} source={source} liveEvaluation={liveEvaluation} postJson={postJson} t={t} />
         </>
       )}
     </section>

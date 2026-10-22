@@ -681,3 +681,32 @@ test('each matrix cell shows one state: no config, not installed, or its checkbo
   assert.equal(selectable.querySelectorAll('input').length, 1)
   assert.doesNotMatch(selectable.textContent, /no config|not installed/)
 })
+
+test('the benchmark comparison sits under the results matrix and compares the chosen methods', async () => {
+  const matrix = {
+    methods: ['c3sql', 'dinsql'],
+    datasets: ['spider'],
+    metrics: [{ id: 'ex', label: 'Execution accuracy' }],
+    sampling: { limit: 20, mode: 'random', seed: 42 },
+    labels: { c3sql: 'C3SQL', dinsql: 'DINSQL' },
+    alignment: { spider: { aligned: true, sample_hash: 'x', methods: ['c3sql', 'dinsql'] } },
+    cells: [
+      { method: 'c3sql', dataset: 'spider', status: 'ok', values: { ex: 0.8 }, sample_count: 20, run_id: 'run-a' },
+      { method: 'dinsql', dataset: 'spider', status: 'ok', values: { ex: 0.77 }, sample_count: 20, run_id: 'run-b' },
+    ],
+  }
+  const api = async path => {
+    if (String(path).startsWith('/api/results/matrix')) return matrix
+    return { runs: [] }
+  }
+  renderDemo('en-US', baseCapabilities, { api })
+  const user = userEvent.setup()
+  await goToStep(user, 'Compare & History')
+  const benchmark = await screen.findByRole('group', { name: 'Benchmark' })
+  await user.click(within(benchmark).getByRole('button', { name: 'spider' }))
+  await user.click(screen.getByRole('checkbox', { name: 'C3SQL' }))
+  await user.click(screen.getByRole('checkbox', { name: 'DINSQL' }))
+  const table = screen.getByRole('table', { name: 'Metrics on spider' })
+  assert.equal(table.querySelectorAll('tbody tr').length, 2)
+  assert.equal(within(table).getByRole('row', { name: /C3SQL/ }).getAttribute('data-best'), 'true')
+})
