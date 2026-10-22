@@ -47,6 +47,31 @@ class QueryBenchmarkPathTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True)[:400])
 
 
+class BenchmarkRootAnchoringTests(unittest.TestCase):
+    """The path fix itself, checked without an installed benchmark."""
+
+    def anchor(self, *roots):
+        router = mock.Mock(benchmark=[{"id": f"b{index}", "root_path": root} for index, root in enumerate(roots)])
+        SqurveDemo._anchor_benchmark_roots(router, Path("/repo/config"))
+        return [meta["root_path"] for meta in router.benchmark]
+
+    def test_a_relative_root_resolves_against_the_system_config_folder(self):
+        self.assertEqual(self.anchor("../benchmarks/spider"), [str(Path("/repo/benchmarks/spider").resolve())])
+
+    def test_the_working_directory_does_not_change_the_result(self):
+        original_cwd = os.getcwd()
+        self.addCleanup(os.chdir, original_cwd)
+        with tempfile.TemporaryDirectory() as elsewhere:
+            os.chdir(elsewhere)
+            self.assertEqual(self.anchor("../benchmarks/spider"), [str(Path("/repo/benchmarks/spider").resolve())])
+
+    def test_absolute_and_missing_roots_are_left_alone(self):
+        self.assertEqual(self.anchor("/data/spider", "", None), ["/data/spider", "", None])
+
+    def test_a_router_without_benchmarks_is_a_no_op(self):
+        SqurveDemo._anchor_benchmark_roots(mock.Mock(benchmark=None), Path("/repo/config"))
+
+
 class QueryByMethodTests(unittest.TestCase):
     def setUp(self):
         api_server.app.config.update(TESTING=True)
