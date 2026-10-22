@@ -7,6 +7,7 @@ import {
   withConnectionKeys,
 } from './model.js'
 import { experimentCells, variantLabel } from './variantModel.js'
+import { planSummary } from './experimentPlan.js'
 
 export const RUN_PHASES = [
   'ready',
@@ -731,6 +732,23 @@ export default function RunWorkspace({
             </label>
           </div>
           <p>{t('run.batchTargetCount', { count: runTargets.length, max: MAX_BATCH_TARGETS })}</p>
+          <p className="run-plan-summary" data-testid="run-plan-summary">
+            {(() => {
+              const summary = planSummary({
+                cells: [
+                  ...runTargets.map(item => ({ method: item.config.method, dataset: item.config.dataset, stages: {} })),
+                  ...variants.map(item => ({ method: item.method, dataset: item.dataset, stages: item.stages })),
+                ],
+                sampling: { limit: sampleLimit },
+              })
+              return t('plan.summary', {
+                cells: summary.cells,
+                variants: summary.variants,
+                limit: summary.questionsPerCell,
+                questions: summary.questions,
+              })
+            })()}
+          </p>
           {!primaryConfig && <p>{t('run.unavailable')}</p>}
         </div>
 

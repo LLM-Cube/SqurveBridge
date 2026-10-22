@@ -435,6 +435,7 @@ export default {
   'run.activeTarget': 'Active target',
   'run.configPath': 'Config path',
   'run.workflow': 'Workflow',
+  'plan.summary': '{cells} cells · {variants} variants · {limit} questions each · {questions} questions in total',
   'run.batchTargetCount': '{count} Compose connections · max {max}',
   'run.batchJobs': 'Config jobs',
   'run.batchEmpty': 'No config jobs yet. Set sampling and run.',

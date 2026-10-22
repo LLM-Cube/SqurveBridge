@@ -55,6 +55,7 @@ const translations = {
   'run.checkpointReady': 'Resumable',
   'run.resumeHint': 'Checkpoint ready · resume {count}/{max} · same as {command}',
   'run.sampleUnit': 'samples',
+  'plan.summary': '{cells} cells · {variants} variants · {limit} questions each · {questions} questions in total',
   'run.samplesStarted': '{count} samples started',
   'run.waiting': 'Waiting to run',
   'run.unavailable': 'This configuration is unavailable.',
@@ -589,4 +590,19 @@ test('sanitizes supported credential forms while preserving benign technical tex
   assert.equal(sanitized.includes('oauth-secret'), false)
   assert.equal(sanitized.includes('sk_test_51LeakTokenValue'), false)
   assert.match(sanitized, /SQLite syntax error near SELECT at line 4/)
+})
+
+test('the run page states what the plan will execute before it is sent', () => {
+  renderRun({
+    selectedConnections: [
+      { method: 'DINSQL', database: 'Spider' },
+      { method: 'C3SQL', database: 'BIRD' },
+    ],
+    configs: [baseConfig, { method: 'c3sql', dataset: 'bird', config_path: 'x', stages: [] }],
+    variants: [{ method: 'dinsql', dataset: 'spider', stages: { generate: 'C3SQLGenerator' } }],
+  })
+  assert.equal(
+    screen.getByTestId('run-plan-summary').textContent,
+    '3 cells · 1 variants · 20 questions each · 60 questions in total',
+  )
 })

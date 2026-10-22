@@ -435,6 +435,7 @@ export default {
   'run.activeTarget': '当前目标',
   'run.configPath': '配置路径',
   'run.workflow': '工作流',
+  'plan.summary': '{cells} 个单元格 · {variants} 个变体 · 每格 {limit} 题 · 共 {questions} 题',
   'run.batchTargetCount': '编排连线 {count} 条 · 最多 {max}',
   'run.batchJobs': 'Config 任务',
   'run.batchEmpty': '尚无 config 任务。配置采样后一键运行。',
