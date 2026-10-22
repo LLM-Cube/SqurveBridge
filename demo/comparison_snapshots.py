@@ -23,6 +23,10 @@ def _folder(root: Path) -> Path:
     return root / "comparisons"
 
 
+def _read(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def save(root: Path, payload: dict) -> dict:
     benchmark = str(payload.get("benchmark") or "")
     members = payload.get("members") or []
@@ -62,7 +66,7 @@ def load(root: Path, snapshot_id: str, run_exists: Callable[[str], bool]) -> dic
     path = _folder(root) / f"{snapshot_id}.json"
     if not path.is_file():
         return None
-    snapshot = json.loads(path.read_text(encoding="utf-8"))
+    snapshot = _read(path)
     for member in snapshot["members"]:
         member["status"] = "ok" if member.get("run_id") and run_exists(member["run_id"]) else "run_missing"
     return snapshot
@@ -74,7 +78,7 @@ def list_snapshots(root: Path) -> list[dict]:
         return []
     summaries = []
     for path in sorted(folder.glob("*.json")):
-        snapshot = json.loads(path.read_text(encoding="utf-8"))
+        snapshot = _read(path)
         summaries.append({
             "id": snapshot["id"],
             "name": snapshot["name"],

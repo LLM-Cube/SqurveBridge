@@ -116,6 +116,3 @@ class SnapshotApiTests(unittest.TestCase):
             self.assertEqual(response.status_code, 403)
             self.assertEqual(response.json["reason"], "local_only")
             self.assertEqual(self.client.get("/api/comparison-snapshots").status_code, 200)
-
-
-

@@ -136,6 +136,7 @@ def main(dataset_name, method, resume=False, resume_from=None):
                 custom_results=custom_results,
                 stage_results=stage_results,
                 token_data=token_data,
+                stage_overrides=stage_overrides,
             )
         else:
             scores_path, scores = None, None
@@ -563,6 +564,7 @@ def _persist_scores(
         custom_results,
         stage_results=None,
         token_data=None,
+        stage_overrides=None,
 ):
     output_dir = _scores_output_dir(run_id)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -597,7 +599,6 @@ def _persist_scores(
     )
     if stage_results:
         scores["stage_metrics"] = stage_results
-    stage_overrides = stage_overrides_from_env()
     if stage_overrides:
         scores["stage_overrides"] = {stage: item["actor"] for stage, item in stage_overrides.items()}
     persisted = persist_scores_bundle(
