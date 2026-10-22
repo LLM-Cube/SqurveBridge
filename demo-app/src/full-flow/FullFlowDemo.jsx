@@ -29,6 +29,29 @@ import './agent-shell.css'
 import './ui-enhancements.css'
 
 const AgentHarness = lazy(() => import('../AgentHarness.jsx'))
+const DRAFT_STORAGE_KEY = 'squrve-demo-draft'
+
+// The unsent plan (combinations and variants) survives a reload. A missing or unreadable draft means none.
+function loadDraft() {
+  try {
+    const draft = JSON.parse(window.localStorage.getItem(DRAFT_STORAGE_KEY) || 'null')
+    if (!draft || !Array.isArray(draft.connections) || !draft.connections.length) return null
+    return { connections: draft.connections, variants: Array.isArray(draft.variants) ? draft.variants : [] }
+  } catch {
+    return null
+  }
+}
+
+function saveDraft(connections, variants) {
+  try {
+    window.localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({
+      connections: connections.map(({ method, database }) => ({ method, database })),
+      variants,
+    }))
+  } catch {
+    // Storage can be blocked; the page works without a draft.
+  }
+}
 const SPLIT_STORAGE_KEY = 'squrve-demo-shell-layout'
 
 // All five stage pages stay mounted (hidden pages keep their state), so any
@@ -74,9 +97,9 @@ export default function FullFlowDemo({
     section: resolveSection(window.location.hash),
     id: 0,
   }))
-  const [selectedConnections, setSelectedConnections] = useState([
-    { method: METHODS[0], database: DATABASES[0] },
-  ])
+  const [selectedConnections, setSelectedConnections] = useState(() => (
+    loadDraft()?.connections || [{ method: METHODS[0], database: DATABASES[0] }]
+  ))
   const connectionsRef = useRef(selectedConnections)
   const [focusedMethod, setFocusedMethod] = useState(METHODS[0])
   const [focusedDatabase, setFocusedDatabase] = useState(DATABASES[0])
@@ -93,7 +116,7 @@ export default function FullFlowDemo({
   const [mobilePane, setMobilePane] = useState('dashboard')
   const [adoptedSql, setAdoptedSql] = useState(null)
   // Actor-swap variants built in Compose; each runs as its own experiment cell.
-  const [variants, setVariants] = useState([])
+  const [variants, setVariants] = useState(() => loadDraft()?.variants || [])
   const splitRef = useRef(null)
   const shellRef = useRef(null)
   const dividerGhostRef = useRef(null)
@@ -124,6 +147,10 @@ export default function FullFlowDemo({
   useEffect(() => {
     window.localStorage.setItem(SPLIT_STORAGE_KEY, JSON.stringify(shellLayout))
   }, [shellLayout])
+
+  useEffect(() => {
+    saveDraft(selectedConnections, variants)
+  }, [selectedConnections, variants])
 
   useEffect(() => {
     const syncFromHash = () => {

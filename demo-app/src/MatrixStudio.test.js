@@ -710,3 +710,17 @@ test('the benchmark comparison sits under the results matrix and compares the ch
   assert.equal(table.querySelectorAll('tbody tr').length, 2)
   assert.equal(within(table).getByRole('row', { name: /C3SQL/ }).getAttribute('data-best'), 'true')
 })
+
+test('an unsent draft plan survives a page reload', async () => {
+  const first = renderDemo()
+  const user = userEvent.setup()
+  await goToStep(user, 'Compose')
+  await user.click(screen.getByRole('checkbox', { name: 'C3SQL × BIRD' }))
+  assert.equal(screen.getByRole('checkbox', { name: 'C3SQL × BIRD' }).checked, true)
+  first.unmount()
+
+  renderDemo()
+  await goToStep(user, 'Compose')
+  assert.equal(screen.getByRole('checkbox', { name: 'C3SQL × BIRD' }).checked, true, 'the draft is restored')
+  assert.equal(screen.getByRole('checkbox', { name: 'C3SQL × Spider' }).checked, true)
+})
