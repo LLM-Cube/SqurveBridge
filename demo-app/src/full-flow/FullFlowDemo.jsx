@@ -330,11 +330,12 @@ export default function FullFlowDemo({
         sampleSeed={sampleSeed}
         onToggleConnection={onToggleConnection}
         onSelectLine={onSelectGridLine}
+        onFocusConnection={onFocusConnection}
+        focusedMethod={focusedMethod}
+        focusedDatabase={focusedDatabase}
         t={t}
       />
       <MemoConnectionComposer
-        selectedMethods={selectedMethods}
-        selectedDatabases={selectedDatabases}
         selectedConnections={connections}
         focusedMethod={focusedMethod}
         focusedDatabase={focusedDatabase}

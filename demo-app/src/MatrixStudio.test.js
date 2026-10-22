@@ -5,6 +5,7 @@ import { register as registerLoader } from 'node:module'
 import React from 'react'
 import { register } from 'tsx/esm/api'
 import { installTestDom } from './testDom.js'
+import { DATABASES, METHODS } from './full-flow/model.js'
 
 const closeDom = installTestDom()
 globalThis.React = React
@@ -23,14 +24,28 @@ const fullFlowCss = readFileSync(
   'utf8',
 )
 
-const baseCapabilities = {
-  reproduce_configs: [{
-    method: 'c3sql',
-    dataset: 'spider',
-    config_path: 'reproduce/configs/spider/c3sql.json',
-    stages: [{ id: 'generate', type: 'GenerateTask', actor: 'C3SQLGenerator' }],
-  }],
+const C3SQL_SPIDER = {
+  method: 'c3sql',
+  dataset: 'spider',
+  config_path: 'reproduce/configs/spider/c3sql.json',
+  stages: [{ id: 'generate', type: 'GenerateTask', actor: 'C3SQLGenerator' }],
 }
+
+// Every method × benchmark has a config, as in the real catalogue, so the matrix
+// offers all 64 cells. Explicit configs win over the generated placeholders.
+const keyOf = config => `${config.method}/${config.dataset}`.toLowerCase().replace(/[_\s-]+/g, '')
+function catalogWith(explicit = []) {
+  const taken = new Set(explicit.map(keyOf))
+  const generated = METHODS.flatMap(method => DATABASES.map(database => ({
+    method: method.toLowerCase().replace(/ /g, '-'),
+    dataset: database,
+    config_path: `reproduce/configs/${database}/${method}.json`,
+    stages: [],
+  })))
+  return [...explicit, ...generated.filter(config => !taken.has(keyOf(config)))]
+}
+
+const baseCapabilities = { reproduce_configs: catalogWith([C3SQL_SPIDER]) }
 
 function renderDemo(locale = 'en-US', capabilities = baseCapabilities, overrides = {}) {
   localStorage.setItem('squrve-demo-locale', locale)
@@ -229,92 +244,6 @@ test('switches to Chinese and persists the locale', async () => {
   assert.equal(document.documentElement.lang, 'zh-CN')
 })
 
-test('wires exactly one connection per node pair without cartesian expansion', async () => {
-  renderDemo()
-  const user = userEvent.setup()
-
-  assert.ok(document.querySelector('[data-testid="catalog-workspaces"]'))
-  assert.equal(document.querySelectorAll('.catalog-workspace').length, 2)
-  assert.ok(document.querySelector('.catalog-workspace-methods'))
-  assert.ok(document.querySelector('.catalog-workspace-databases'))
-  assert.equal(document.querySelector('#catalog-methods-title')?.textContent, 'Methods')
-  assert.equal(document.querySelector('#catalog-databases-title')?.textContent, 'Databases')
-  assert.equal(screen.getAllByRole('button', { name: /^Open flashcard for method / }).length, 8)
-  assert.equal(screen.getAllByRole('button', { name: /^Open flashcard for database / }).length, 8)
-
-  await goToStep(user, 'Compose')
-  await user.click(screen.getByRole('button', { name: 'Start wiring from method DINSQL' }))
-  assert.equal(screen.getByTestId('compose-wire-hint').getAttribute('data-armed'), 'true')
-  assert.match(screen.getByTestId('compose-wire-hint').textContent, /Wiring from DINSQL/)
-  await user.click(screen.getByRole('button', { name: 'Wire DINSQL to BIRD' }))
-
-  assert.equal(screen.getAllByRole('button', { name: /^Focus connection / }).length, 2)
-  assert.ok(screen.getByRole('button', { name: 'Focus connection DINSQL to BIRD' }))
-  assert.equal(screen.queryByRole('button', { name: 'Focus connection DINSQL to Spider' }), null)
-  assert.equal(screen.queryByRole('button', { name: 'Focus connection C3SQL to BIRD' }), null)
-  assert.equal(
-    screen.getByRole('button', { name: 'Cancel wiring from DINSQL' }).getAttribute('aria-pressed'),
-    'true',
-  )
-
-  // Wiring stays armed, so the same method can be fanned out to more databases.
-  await user.click(screen.getByRole('button', { name: 'Wire DINSQL to Spider' }))
-  assert.equal(screen.getAllByRole('button', { name: /^Focus connection / }).length, 3)
-  // The freshly connected pair is focused; clicking it again removes it.
-  await user.click(screen.getByRole('button', { name: 'Wire DINSQL to Spider' }))
-  assert.equal(screen.getAllByRole('button', { name: /^Focus connection / }).length, 2)
-})
-
-test('cancels the pending wiring state with Escape', async () => {
-  renderDemo()
-  const user = userEvent.setup()
-
-  await goToStep(user, 'Compose')
-  await user.click(screen.getByRole('button', { name: 'Start wiring from method DINSQL' }))
-  assert.equal(screen.getByTestId('compose-wire-hint').getAttribute('data-armed'), 'true')
-  assert.ok(document.querySelector('.flow-connection-graph[data-armed="true"]'))
-
-  await user.keyboard('{Escape}')
-  assert.equal(screen.getByTestId('compose-wire-hint').getAttribute('data-armed'), 'false')
-  assert.ok(screen.getByRole('button', { name: 'Start wiring from method DINSQL' }))
-  assert.equal(screen.getAllByRole('button', { name: /^Focus connection / }).length, 1)
-})
-
-test('announces node-first connect, inspect, and remove through the live region', async () => {
-  renderDemo()
-  const user = userEvent.setup()
-
-  await goToStep(user, 'Compose')
-  await user.click(screen.getByRole('button', { name: 'Start wiring from method DINSQL' }))
-  await user.click(screen.getByRole('button', { name: 'Wire DINSQL to BIRD' }))
-  assert.match(screen.getByTestId('compose-live-region').textContent, /Connected DINSQL to BIRD/)
-  assert.match(screen.getByTestId('compose-workflow-panel').textContent, /DINSQL → BIRD/)
-
-  // Clicking a connected-but-not-inspected pair switches the Inspect panel.
-  await user.click(screen.getByRole('button', { name: 'Start wiring from method C3SQL' }))
-  await user.click(screen.getByRole('button', { name: 'Wire C3SQL to Spider' }))
-  assert.match(screen.getByTestId('compose-live-region').textContent, /Inspecting C3SQL to Spider/)
-  assert.match(screen.getByTestId('compose-workflow-panel').textContent, /C3SQL → Spider/)
-
-  // Clicking the inspected pair again removes it.
-  await user.click(screen.getByRole('button', { name: 'Wire C3SQL to Spider' }))
-  assert.match(screen.getByTestId('compose-live-region').textContent, /Removed connection C3SQL to Spider/)
-  assert.equal(screen.getAllByRole('button', { name: /^Focus connection / }).length, 1)
-})
-
-test('refuses to drop the last connection and announces why', async () => {
-  renderDemo()
-  const user = userEvent.setup()
-
-  await goToStep(user, 'Compose')
-  await user.click(screen.getByRole('button', { name: 'Start wiring from method C3SQL' }))
-  await user.click(screen.getByRole('button', { name: 'Wire C3SQL to Spider' }))
-
-  assert.match(screen.getByTestId('compose-live-region').textContent, /At least one connection must remain/)
-  assert.equal(screen.getAllByRole('button', { name: /^Focus connection / }).length, 1)
-  assert.match(screen.getByTestId('compose-workflow-panel').textContent, /C3SQL → Spider/)
-})
-
 test('keeps Studio focused on explaining methods and databases', async () => {
   renderDemo()
   const user = userEvent.setup()
@@ -324,14 +253,12 @@ test('keeps Studio focused on explaining methods and databases', async () => {
   assert.match(screen.getByTestId('studio-guide').textContent, /Browse, then open|先浏览/)
   assert.ok(document.querySelector('.agent-chat-column'))
   assert.match(screen.getByRole('heading', { level: 2, name: 'SqurveBridge Agent' }).textContent, /SqurveBridge Agent/)
-  assert.equal(document.querySelector('#configure .flow-connection-graph'), null)
   assert.equal(document.querySelector('#configure [data-testid="actor-workflow"]'), null)
   assert.equal(screen.queryByRole('button', { name: /^Select method / }), null)
 
   await goToStep(user, 'Compose')
-  assert.ok(document.querySelector('#compose .flow-connection-graph'))
+  assert.ok(screen.getByTestId('experiment-grid'))
   assert.ok(screen.getByTestId('actor-workflow'))
-  assert.match(document.querySelector('#compose').textContent, /Method × Database/)
 })
 
 test('keeps the local Configure surface free of a duplicate agent intake panel', () => {
@@ -368,7 +295,7 @@ test('supports arbitrary graph connections without cartesian expansion', async (
   const user = userEvent.setup()
 
   await goToStep(user, 'Compose')
-  await user.click(screen.getByRole('button', { name: 'Toggle connection DINSQL to BIRD' }))
+  await user.click(screen.getByRole('checkbox', { name: 'DINSQL × BIRD' }))
 
   assert.equal(screen.getAllByRole('button', { name: /^Focus connection / }).length, 2)
   assert.ok(screen.getByRole('button', { name: 'Focus connection C3SQL to Spider' }))
@@ -382,8 +309,8 @@ test('supports arbitrary graph connections without cartesian expansion', async (
     null,
   )
   assert.equal(
-    screen.getByRole('button', { name: 'Toggle connection DINSQL to BIRD' }).getAttribute('aria-pressed'),
-    'true',
+    screen.getByRole('checkbox', { name: 'DINSQL × BIRD' }).checked,
+    true,
   )
   assert.match(screen.getByTestId('compose-workflow-panel').textContent, /DINSQL → BIRD/)
 })
@@ -393,26 +320,26 @@ test('fans one method out to several databases from the grid', async () => {
   const user = userEvent.setup()
 
   await goToStep(user, 'Compose')
-  const grid = screen.getByTestId('compose-grid')
+  const grid = screen.getByTestId('experiment-grid')
   // Clicked back to back without waiting for the first commit, the way a user
   // wiring a row actually clicks.
   await act(async () => {
-    fireEvent.click(within(grid).getByRole('button', { name: 'Toggle connection DINSQL to BIRD' }))
-    fireEvent.click(within(grid).getByRole('button', { name: 'Toggle connection DINSQL to Spider' }))
+    fireEvent.click(within(grid).getByRole('checkbox', { name: 'DINSQL × BIRD' }))
+    fireEvent.click(within(grid).getByRole('checkbox', { name: 'DINSQL × Spider' }))
   })
-  await user.click(within(grid).getByRole('button', { name: 'Toggle connection DINSQL to BookSQL' }))
+  await user.click(within(grid).getByRole('checkbox', { name: 'DINSQL × BookSQL' }))
 
   assert.equal(
-    within(grid).getByRole('button', { name: 'Toggle connection DINSQL to BIRD' }).getAttribute('aria-pressed'),
-    'true',
+    within(grid).getByRole('checkbox', { name: 'DINSQL × BIRD' }).checked,
+    true,
   )
   assert.equal(
-    within(grid).getByRole('button', { name: 'Toggle connection DINSQL to Spider' }).getAttribute('aria-pressed'),
-    'true',
+    within(grid).getByRole('checkbox', { name: 'DINSQL × Spider' }).checked,
+    true,
   )
   assert.equal(
-    within(grid).getByRole('button', { name: 'Toggle connection DINSQL to BookSQL' }).getAttribute('aria-pressed'),
-    'true',
+    within(grid).getByRole('checkbox', { name: 'DINSQL × BookSQL' }).checked,
+    true,
   )
   assert.ok(screen.getByRole('button', { name: 'Focus connection DINSQL to BIRD' }))
   assert.ok(screen.getByRole('button', { name: 'Focus connection DINSQL to Spider' }))
@@ -426,122 +353,34 @@ test('exposes every method and database pair as a grid cell', async () => {
   const user = userEvent.setup()
 
   await goToStep(user, 'Compose')
-  const grid = screen.getByTestId('compose-grid')
-  assert.equal(grid.querySelectorAll('.compose-grid-cell').length, 64)
-
-  // The seeded pair reads as connected and currently inspected.
-  const seeded = within(grid).getByRole('button', { name: 'Toggle connection C3SQL to Spider' })
-  assert.equal(seeded.getAttribute('aria-pressed'), 'true')
-  assert.ok(seeded.classList.contains('focused'))
-
-  // A pair with a reproduce config is marked ready before it is wired.
-  const unwired = within(grid).getByRole('button', { name: 'Toggle connection SEDE to AmbiDB' })
-  assert.equal(unwired.getAttribute('aria-pressed'), 'false')
-  assert.ok(unwired.classList.contains('unavailable'))
+  const grid = screen.getByTestId('experiment-grid')
+  assert.equal(grid.querySelectorAll('tbody td').length, 64)
+  assert.ok(within(grid).getByRole('checkbox', { name: 'DINSQL × BIRD' }))
 })
 
-test('removes a grid connection only through the cell disconnect control', async () => {
+test('unselecting a matrix cell removes its connection', async () => {
   renderDemo()
   const user = userEvent.setup()
 
   await goToStep(user, 'Compose')
-  const grid = screen.getByTestId('compose-grid')
-  await user.click(within(grid).getByRole('button', { name: 'Toggle connection DINSQL to BIRD' }))
+  const grid = screen.getByTestId('experiment-grid')
+  await user.click(within(grid).getByRole('checkbox', { name: 'DINSQL × BIRD' }))
   assert.equal(screen.getAllByRole('button', { name: /^Focus connection / }).length, 2)
 
-  // The cell body no longer doubles as a delete: clicking the inspected cell
-  // again must keep the pair.
-  await user.click(within(grid).getByRole('button', { name: 'Toggle connection DINSQL to BIRD' }))
-  assert.equal(
-    within(grid).getByRole('button', { name: 'Toggle connection DINSQL to BIRD' }).getAttribute('aria-pressed'),
-    'true',
-  )
-  assert.equal(screen.getAllByRole('button', { name: /^Focus connection / }).length, 2)
-
-  await user.click(within(grid).getByRole('button', { name: 'Disconnect DINSQL from BIRD' }))
-  assert.match(screen.getByTestId('compose-live-region').textContent, /Removed connection DINSQL to BIRD/)
+  await user.click(within(grid).getByRole('checkbox', { name: 'DINSQL × BIRD' }))
   assert.equal(screen.getAllByRole('button', { name: /^Focus connection / }).length, 1)
-  assert.equal(
-    within(grid).getByRole('button', { name: 'Toggle connection DINSQL to BIRD' }).getAttribute('aria-pressed'),
-    'false',
-  )
-  assert.equal(within(grid).queryByRole('button', { name: 'Disconnect DINSQL from BIRD' }), null)
+  assert.equal(within(grid).getByRole('checkbox', { name: 'DINSQL × BIRD' }).checked, false)
 })
 
-test('restores a removed grid connection and its inspected state through undo', async () => {
+test('the last selected cell cannot be unselected', async () => {
   renderDemo()
   const user = userEvent.setup()
 
   await goToStep(user, 'Compose')
-  const grid = screen.getByTestId('compose-grid')
-  await user.click(within(grid).getByRole('button', { name: 'Toggle connection DINSQL to BIRD' }))
-  assert.match(screen.getByTestId('compose-workflow-panel').textContent, /DINSQL → BIRD/)
-
-  // Dropping the inspected pair and undoing puts it back as the inspected one.
-  await user.click(within(grid).getByRole('button', { name: 'Disconnect DINSQL from BIRD' }))
-  await user.click(screen.getByRole('button', { name: 'Undo removing DINSQL to BIRD' }))
-  assert.equal(screen.getAllByRole('button', { name: /^Focus connection / }).length, 2)
-  assert.match(screen.getByTestId('compose-workflow-panel').textContent, /DINSQL → BIRD/)
-  assert.equal(screen.queryByTestId('compose-undo'), null)
-
-  // Dropping a pair that is not inspected must not steal the inspected one.
-  await user.click(screen.getByRole('button', { name: 'Focus connection C3SQL to Spider' }))
-  await user.click(within(grid).getByRole('button', { name: 'Disconnect DINSQL from BIRD' }))
-  await user.click(screen.getByRole('button', { name: 'Undo removing DINSQL to BIRD' }))
-  assert.equal(screen.getAllByRole('button', { name: /^Focus connection / }).length, 2)
-  assert.match(screen.getByTestId('compose-workflow-panel').textContent, /C3SQL → Spider/)
-})
-
-test('drops the undo entry once the next composition step happens', async () => {
-  renderDemo()
-  const user = userEvent.setup()
-
-  await goToStep(user, 'Compose')
-  const grid = screen.getByTestId('compose-grid')
-  await user.click(within(grid).getByRole('button', { name: 'Toggle connection DINSQL to BIRD' }))
-  await user.click(within(grid).getByRole('button', { name: 'Disconnect DINSQL from BIRD' }))
-  assert.ok(screen.getByTestId('compose-undo'))
-
-  await user.click(within(grid).getByRole('button', { name: 'Toggle connection SEDE to AmbiDB' }))
-  assert.equal(screen.queryByTestId('compose-undo'), null)
-})
-
-test('protects the last connection from the grid disconnect control', async () => {
-  renderDemo()
-  const user = userEvent.setup()
-
-  await goToStep(user, 'Compose')
-  const grid = screen.getByTestId('compose-grid')
-  const drop = within(grid).getByRole('button', { name: 'Disconnect C3SQL from Spider' })
-  assert.equal(drop.getAttribute('aria-disabled'), 'true')
-  assert.match(drop.getAttribute('title'), /At least one connection must remain/)
-
-  await user.click(drop)
-  assert.match(screen.getByTestId('compose-live-region').textContent, /At least one connection must remain/)
+  const grid = screen.getByTestId('experiment-grid')
+  await user.click(within(grid).getByRole('checkbox', { name: 'C3SQL × Spider' }))
   assert.equal(screen.getAllByRole('button', { name: /^Focus connection / }).length, 1)
-  assert.equal(screen.queryByTestId('compose-undo'), null)
-})
-
-test('marks the hovered row and column across the connection grid', async () => {
-  renderDemo()
-  const user = userEvent.setup()
-
-  await goToStep(user, 'Compose')
-  const grid = screen.getByTestId('compose-grid')
-  await user.hover(within(grid).getByRole('button', { name: 'Toggle connection SEDE to BookSQL' }))
-
-  assert.equal(
-    within(grid).getByRole('rowheader', { name: 'SEDE' }).getAttribute('data-peer'),
-    'true',
-  )
-  assert.equal(
-    within(grid).getByRole('columnheader', { name: 'BookSQL' }).getAttribute('data-peer'),
-    'true',
-  )
-  assert.equal(
-    within(grid).getByRole('rowheader', { name: 'C3SQL' }).getAttribute('data-peer'),
-    'false',
-  )
+  assert.equal(within(grid).getByRole('checkbox', { name: 'C3SQL × Spider' }).checked, true)
 })
 
 test('switches inspected workflow across multiple selected connections', async () => {
@@ -549,7 +388,7 @@ test('switches inspected workflow across multiple selected connections', async (
   const user = userEvent.setup()
 
   await goToStep(user, 'Compose')
-  await user.click(screen.getByRole('button', { name: 'Toggle connection DINSQL to BIRD' }))
+  await user.click(screen.getByRole('checkbox', { name: 'DINSQL × BIRD' }))
   assert.match(screen.getByTestId('compose-workflow-panel').textContent, /DINSQL → BIRD/)
   assert.match(screen.getByTestId('compose-connection-switcher').textContent, /2 \/ 2/)
 
@@ -574,51 +413,47 @@ test('switches inspected workflow across multiple selected connections', async (
 
 test('moves method focus to a remaining selected method when removing the focused method', async () => {
   renderDemo('en-US', {
-    reproduce_configs: [
-      ...baseCapabilities.reproduce_configs,
+    reproduce_configs: catalogWith([
+      C3SQL_SPIDER,
       {
         method: 'dinsql',
         dataset: 'spider',
         config_path: 'reproduce/configs/spider/dinsql.json',
         stages: [{ id: 'generate', type: 'GenerateTask', actor: 'DINSQLGenerator' }],
       },
-    ],
+    ]),
   })
   const user = userEvent.setup()
 
   await goToStep(user, 'Compose')
-  await user.click(screen.getByRole('button', { name: 'Start wiring from method DINSQL' }))
-  await user.click(screen.getByRole('button', { name: 'Wire DINSQL to Spider' }))
+  const grid = screen.getByTestId('experiment-grid')
+  await user.click(within(grid).getByRole('checkbox', { name: 'DINSQL × Spider' }))
   assert.match(screen.getByTestId('compose-workflow-panel').textContent, /DINSQL → Spider/)
-  await user.click(screen.getByRole('button', { name: 'Wire DINSQL to Spider' }))
+  await user.click(within(grid).getByRole('checkbox', { name: 'DINSQL × Spider' }))
 
-  assert.equal(screen.getByRole('button', { name: 'Start wiring from method C3SQL' }).getAttribute('aria-pressed'), 'true')
-  assert.equal(screen.getByRole('button', { name: 'Cancel wiring from DINSQL' }).getAttribute('aria-pressed'), 'false')
   assert.match(screen.getByTestId('compose-workflow-panel').textContent, /C3SQL → Spider/)
 })
 
 test('moves database focus to a remaining selected database when removing the focused database', async () => {
   renderDemo('en-US', {
-    reproduce_configs: [
-      ...baseCapabilities.reproduce_configs,
+    reproduce_configs: catalogWith([
+      C3SQL_SPIDER,
       {
         method: 'c3sql',
         dataset: 'bird',
         config_path: 'reproduce/configs/bird/c3sql.json',
         stages: [{ id: 'generate', type: 'GenerateTask', actor: 'C3SQLGenerator' }],
       },
-    ],
+    ]),
   })
   const user = userEvent.setup()
 
   await goToStep(user, 'Compose')
-  await user.click(screen.getByRole('button', { name: 'Start wiring from database BIRD' }))
-  await user.click(screen.getByRole('button', { name: 'Wire C3SQL to BIRD' }))
+  const grid = screen.getByTestId('experiment-grid')
+  await user.click(within(grid).getByRole('checkbox', { name: 'C3SQL × BIRD' }))
   assert.match(screen.getByTestId('compose-workflow-panel').textContent, /C3SQL → BIRD/)
-  await user.click(screen.getByRole('button', { name: 'Wire C3SQL to BIRD' }))
+  await user.click(within(grid).getByRole('checkbox', { name: 'C3SQL × BIRD' }))
 
-  assert.equal(screen.getByRole('button', { name: 'Start wiring from database Spider' }).getAttribute('aria-pressed'), 'true')
-  assert.equal(screen.getByRole('button', { name: 'Cancel wiring from BIRD' }).getAttribute('aria-pressed'), 'false')
   assert.match(screen.getByTestId('compose-workflow-panel').textContent, /C3SQL → Spider/)
 })
 
@@ -660,7 +495,7 @@ test('renders only configuration-backed workflow and provenance', async () => {
   const user = userEvent.setup()
 
   await goToStep(user, 'Compose')
-  assert.ok(screen.getByRole('group', { name: /^Method to database configuration matrix/ }))
+  assert.ok(screen.getByTestId('experiment-grid'))
   assert.match(screen.getByTestId('actor-workflow').textContent, /C3SQLGenerator/)
   assert.match(screen.getByTestId('actor-workflow').textContent, /GenerateTask/)
 
@@ -674,18 +509,15 @@ test('renders only configuration-backed workflow and provenance', async () => {
   assert.equal(screen.getByTestId('integration-provenance').hidden, true)
 })
 
-test('does not invent stages for an unavailable connection', async () => {
+test('does not invent stages for a connection without a verified workflow', async () => {
   renderDemo()
   const user = userEvent.setup()
   await goToStep(user, 'Compose')
-  await user.click(screen.getByRole('button', { name: 'Toggle connection C3SQL to BIRD' }))
+  await user.click(screen.getByRole('checkbox', { name: 'C3SQL × BIRD' }))
   await user.click(screen.getByRole('button', { name: 'Focus connection C3SQL to BIRD' }))
 
   assert.match(screen.getByTestId('actor-workflow').textContent, /No verified workflow/)
   assert.doesNotMatch(screen.getByTestId('actor-workflow').textContent, /Generator/)
-  await goToStep(user, 'Run')
-  assert.match(document.querySelector('#board').textContent, /configuration is unavailable/)
-  assert.equal(screen.getByRole('button', { name: 'Run config' }).disabled, true)
 })
 
 test('expands archive charts inline without requesting raw files on hosted demo', async () => {
@@ -757,15 +589,15 @@ test('expands archive charts inline without requesting raw files on hosted demo'
 test('keeps config-run jobs labelled with their immutable connection after focus changes', async () => {
   const capabilities = {
     deployment: { features: { live_evaluation: true } },
-    reproduce_configs: [
-      baseCapabilities.reproduce_configs[0],
+    reproduce_configs: catalogWith([
+      C3SQL_SPIDER,
       {
         method: 'c3sql',
         dataset: 'bird',
         config_path: 'reproduce/configs/bird/c3sql.json',
         stages: [{ id: 'generate', type: 'GenerateTask', actor: 'C3SQLGenerator' }],
       },
-    ],
+    ]),
   }
   const postJson = async (path, body) => {
     if (path === '/api/evaluations') {
@@ -798,7 +630,7 @@ test('keeps config-run jobs labelled with their immutable connection after focus
   })
 
   await goToStep(user, 'Compose')
-  await user.click(screen.getByRole('button', { name: 'Toggle connection C3SQL to BIRD' }))
+  await user.click(screen.getByRole('checkbox', { name: 'C3SQL × BIRD' }))
   await user.click(screen.getByRole('button', { name: 'Focus connection C3SQL to BIRD' }))
   assert.match(screen.getByTestId('compose-workflow-panel').textContent, /C3SQL → BIRD/)
 
@@ -806,4 +638,22 @@ test('keeps config-run jobs labelled with their immutable connection after focus
   const monitor = screen.getByTestId('run-batch-monitor').textContent
   assert.match(monitor, /c3sql\s*\/\s*spider/i)
   assert.doesNotMatch(monitor, /c3sql\s*\/\s*bird/i)
+})
+
+test('a selected matrix cell opens its workflow from the matrix itself', async () => {
+  renderDemo()
+  const user = userEvent.setup()
+
+  await goToStep(user, 'Compose')
+  const grid = screen.getByTestId('experiment-grid')
+  await user.click(within(grid).getByRole('checkbox', { name: 'C3SQL × BIRD' }))
+  await user.click(within(grid).getByRole('button', { name: 'Show the workflow of C3SQL × BIRD' }))
+
+  assert.match(screen.getByTestId('compose-workflow-panel').textContent, /C3SQL → BIRD/)
+  assert.equal(
+    within(grid).getByRole('button', { name: 'Show the workflow of C3SQL × BIRD' }).getAttribute('aria-pressed'),
+    'true',
+  )
+  // Only selected pairs have a workflow control; DINSQL × BIRD is not selected.
+  assert.equal(within(grid).queryByRole('button', { name: 'Show the workflow of DINSQL × BIRD' }), null)
 })
