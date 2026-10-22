@@ -14,6 +14,7 @@ _HOSTED_FORBIDDEN = (
     ("POST", "/api/databases/upload"),
     ("POST", "/api/evaluations"),
     ("POST", "/api/comparisons"),
+    ("POST", "/api/comparison-snapshots"),
 )
 _HOSTED_FORBIDDEN_PREFIXES = (
     "/api/evaluations/",

@@ -30,6 +30,7 @@ if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
 from demo import model_catalog
+from demo import comparison_snapshots
 from demo.experiments import MAX_CELLS, ExperimentConflict, ExperimentNotFound, ExperimentScheduler
 from demo.variants import VariantError, normalize_stages, runner_overrides, swappable_actors, variant_key, variant_label
 from demo.deployment import deployment_features, deployment_target, route_denial
@@ -2932,6 +2933,35 @@ def _benchmark_questions(dataset: str, split: str) -> dict[str, dict]:
 
 def _public_text(value) -> str | None:
     return value[:_DIFF_TEXT_LIMIT] if isinstance(value, str) else None
+
+
+# --- Comparison snapshots -----------------------------------------------------
+
+@app.post("/api/comparison-snapshots")
+def create_comparison_snapshot():
+    payload = request.get_json(silent=True) or {}
+    try:
+        saved = comparison_snapshots.save(workspace_root(), payload)
+    except ValueError as exc:
+        return _json_error(str(exc))
+    return jsonify(saved), 201
+
+
+@app.get("/api/comparison-snapshots")
+def list_comparison_snapshots():
+    return jsonify({"snapshots": comparison_snapshots.list_snapshots(workspace_root())})
+
+
+@app.get("/api/comparison-snapshots/<snapshot_id>")
+def comparison_snapshot_detail(snapshot_id: str):
+    snapshot = comparison_snapshots.load(
+        workspace_root(),
+        snapshot_id,
+        run_exists=lambda run_id: _resolve_archive_run(run_id) is not None,
+    )
+    if snapshot is None:
+        return _json_error("Comparison snapshot not found.", 404)
+    return jsonify(snapshot)
 
 
 @app.get("/api/results/diff")
