@@ -121,23 +121,23 @@ export default function SchemaTree({
         </button>
       </header>
 
-      <label className="query-schema-database">
-        <span>{t('query.benchmark')}</span>
-        <select
-          value={activeGroup?.id ?? ''}
-          aria-label={t('query.benchmark')}
-          onChange={event => chooseBenchmark(event.target.value)}
-        >
+      <div className="query-schema-field">
+        <span className="query-schema-label">{t('query.benchmark')}</span>
+        <div className="query-schema-chips" role="group" aria-label={t('query.benchmark')}>
           {groups.map(group => (
-            <option key={group.id || 'other'} value={group.id}>
-              {t('query.benchmarkOption', {
-                name: group.label || t('query.otherDatabases'),
-                count: group.databases.length,
-              })}
-            </option>
+            <button
+              key={group.id || 'other'}
+              type="button"
+              className="query-schema-chip"
+              aria-pressed={group.id === activeGroup?.id}
+              onClick={() => chooseBenchmark(group.id)}
+            >
+              <b>{group.label || t('query.otherDatabases')}</b>
+              <small>{group.databases.length}</small>
+            </button>
           ))}
-        </select>
-      </label>
+        </div>
+      </div>
 
       {(activeGroup?.databases.length || 0) > FILTER_THRESHOLD ? (
         <input
@@ -150,24 +150,27 @@ export default function SchemaTree({
         />
       ) : null}
 
-      <label className="query-schema-database">
-        <span>
+      <div className="query-schema-field">
+        <span className="query-schema-label">
           {t('query.database')}
           {databaseTerm.trim() ? ` · ${t('query.databaseMatches', { count: listedDatabases.length })}` : ''}
         </span>
-        <select
-          value={selectedDb}
-          aria-label={t('query.database')}
-          onChange={event => onSelectDb?.(event.target.value)}
-        >
-          <option value="">{t('query.selectDatabase')}</option>
+        <div className="query-schema-list" role="listbox" aria-label={t('query.database')}>
           {listedDatabases.map(database => (
-            <option key={database.id} value={database.id}>
+            <button
+              key={database.id}
+              type="button"
+              role="option"
+              data-id={database.id}
+              aria-selected={database.id === selectedDb}
+              className="query-schema-option"
+              onClick={() => onSelectDb?.(database.id)}
+            >
               {database.name}
-            </option>
+            </button>
           ))}
-        </select>
-      </label>
+        </div>
+      </div>
 
       {selectedDb && (
         <input

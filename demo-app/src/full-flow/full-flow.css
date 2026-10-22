@@ -6493,3 +6493,85 @@
 .flow-demo .experiment-grid td[data-installed="false"] {
   opacity: 0.6;
 }
+
+/* Schema pickers: in-page controls in the workspace palette (the native select menu cannot be styled). */
+.flow-demo .query-schema-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.flow-demo .query-schema-label {
+  color: var(--flow-muted);
+  font-size: var(--flow-type-meta);
+}
+
+.flow-demo .query-schema-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.flow-demo .query-schema-chip {
+  display: inline-flex;
+  gap: 6px;
+  align-items: baseline;
+  border: 1px solid var(--flow-border);
+  border-radius: 999px;
+  padding: 4px 10px;
+  color: var(--flow-text);
+  background: var(--flow-glass);
+  font: inherit;
+  font-size: var(--flow-type-meta);
+  cursor: pointer;
+}
+
+.flow-demo .query-schema-chip small {
+  color: var(--flow-muted);
+}
+
+.flow-demo .query-schema-chip[aria-pressed="true"] {
+  border-color: var(--flow-claude);
+  color: #fbf8f1;
+  background: var(--flow-claude);
+}
+
+.flow-demo .query-schema-chip[aria-pressed="true"] small {
+  color: rgb(251 248 241 / 80%);
+}
+
+.flow-demo .query-schema-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--flow-border);
+  border-radius: 9px;
+  padding: 4px;
+  background: var(--flow-glass);
+}
+
+.flow-demo .query-schema-option {
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: var(--flow-text);
+  background: transparent;
+  font: inherit;
+  font-size: var(--flow-type-meta);
+  text-align: start;
+  cursor: pointer;
+}
+
+.flow-demo .query-schema-option:hover {
+  background: var(--flow-panel-soft);
+}
+
+.flow-demo .query-schema-option[aria-selected="true"] {
+  color: var(--flow-claude-strong);
+  background: var(--flow-panel-soft);
+  font-weight: 650;
+  box-shadow: inset 2px 0 0 var(--flow-claude);
+}

@@ -95,9 +95,13 @@ test.after(() => {
   closeDom()
 })
 
+function selectedDatabase() {
+  return screen.getByRole('listbox', { name: 'Database' }).querySelector('[aria-selected="true"]')?.dataset.id || ''
+}
+
 test('auto-selects a database and renders its schema tree with keys', async () => {
   renderWorkspace()
-  assert.equal(screen.getByLabelText('Database').value, 'concert_singer')
+  assert.equal(selectedDatabase(), 'concert_singer')
   const singerToggle = await screen.findByRole('button', { name: /singer/, expanded: false })
   await userEvent.setup().click(singerToggle)
   assert.ok(screen.getByText('name'))
@@ -325,7 +329,7 @@ test('a question replayed from the comparison runs with that method', async () =
       return { status: 'success', columns: ['n'], rows: [[6]], row_count: 1, truncated: false, elapsed_ms: 3 }
     },
   })
-  assert.equal(screen.getByLabelText('Database').value, 'concert_singer')
+  assert.equal(selectedDatabase(), 'concert_singer')
   assert.equal(screen.getByLabelText('Natural-language question').value, 'How many singers are there?')
   await userEvent.setup().click(screen.getByRole('button', { name: 'Run pipeline' }))
   const query = calls.find(([path]) => path === '/api/query')
