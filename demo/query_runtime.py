@@ -153,15 +153,30 @@ class SqurveDemo:
             config = resolve_config_api_keys(config)
         self._resolve_config_paths(config, config_file.parent)
 
+        sys_config_path = _project_root / "config" / "sys_config.json"
         original_sys_config = Router._sys_config_path
-        Router._sys_config_path = str(_project_root / "config" / "sys_config.json")
+        Router._sys_config_path = str(sys_config_path)
         try:
             self.router = Router()
         finally:
             Router._sys_config_path = original_sys_config
+        self._anchor_benchmark_roots(self.router, sys_config_path.parent)
         self.router.init_config(config)
         self.engine = Engine(self.router)
         logger.info(f"SqurveDemo initialized: {self.router.use}/{self.router.model_name}")
+
+    @staticmethod
+    def _anchor_benchmark_roots(router: Router, base_dir: Path) -> None:
+        """Resolve benchmark roots against the system config, not the process cwd.
+
+        The system config writes roots like `../benchmarks/spider`, relative to
+        its own folder; the Router reads them relative to the working directory,
+        which breaks whenever the Demo API is started from the repository root.
+        """
+        for meta in router.benchmark or ():
+            root_path = meta.get("root_path")
+            if isinstance(root_path, str) and root_path and not Path(root_path).is_absolute():
+                meta["root_path"] = str((base_dir / root_path).resolve())
 
     @staticmethod
     def _resolve_config_paths(config: dict, base_dir: Path) -> None:

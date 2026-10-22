@@ -13,6 +13,7 @@ _HOSTED_FORBIDDEN = (
 )
 _HOSTED_FORBIDDEN_PREFIXES = (
     "/api/evaluations/",
+    "/api/experiments",
 )
 
 

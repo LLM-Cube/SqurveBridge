@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import csv
 import hashlib
+import io
 import ipaddress
 import json
 import os
@@ -14,10 +16,12 @@ import tempfile
 import threading
 import time
 import uuid
+from collections import Counter
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 from flask import Flask, jsonify, request
+from loguru import logger
 from flask_sock import Sock
 from sqlglot import exp, parse
 
@@ -26,6 +30,7 @@ if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
 from demo import model_catalog
+from demo.experiments import MAX_CELLS, ExperimentConflict, ExperimentNotFound, ExperimentScheduler
 from demo.deployment import deployment_features, deployment_target, hosted_route_allowed
 from demo.file_to_db import process_uploaded_files, sqlite_to_schema
 from demo.query_runtime import (
@@ -959,6 +964,19 @@ def query():
     mode = payload.get("mode", "direct")
     actors = payload.get("actors") or []
     generator = payload.get("generator") or "DINSQLGenerator"
+    method = str(payload.get("method") or "").strip()
+    if method:
+        # Replay one question the way a reproduce run does: the method's workflow
+        # for the benchmark this database belongs to.
+        benchmark = str(database.get("benchmark") or "")
+        config = next(
+            (item for item in _config_catalog() if item["method"] == method and item["dataset"] == benchmark),
+            None,
+        )
+        workflow = [stage["actor"] for stage in (config or {}).get("stages") or [] if stage.get("actor")]
+        if not workflow:
+            return _json_error(f"No reproduce workflow for {method} on {benchmark or 'this database'}.")
+        mode, actors = "workflow", workflow
     hosted = deployment_target() == "hf-space"
     if hosted:
         session_id, _ = _browser_session(create=False)
@@ -995,6 +1013,8 @@ def query():
         workflow_actor_lis=actors,
         generate_type=generator,
     )
+    if method:
+        result["method"] = method
     if result.get("status") == "success":
         result["trace"] = _serialize_public_query_trace(result.get("trace"))
         if not hosted:
@@ -2321,6 +2341,593 @@ def resume_evaluation(job_id: str):
     with _jobs_lock:
         return jsonify(_public_job(dict(_jobs[job_id]))), 202
 
+
+# --- Experiments -------------------------------------------------------------
+
+
+class _EvaluationJobBackend:
+    """Runs experiment cells as ordinary Demo evaluation jobs."""
+
+    def launch(self, method: str, dataset: str, sampling: dict, experiment_id: str) -> str:
+        job = _launch_evaluation(
+            dataset, method, f"exp-{experiment_id}", sampling["limit"], sampling["mode"], sampling["seed"],
+        )
+        return job["job_id"]
+
+    def job(self, job_id: str) -> dict | None:
+        with _jobs_lock:
+            job = _jobs.get(job_id)
+            return _job_with_progress(job) if job else None
+
+    def scores(self, job_id: str) -> dict | None:
+        with _jobs_lock:
+            path = Path((_jobs.get(job_id) or {}).get("scores_path") or "")
+        return _read_scores(path) if path.is_file() else None
+
+    def cancel(self, job_id: str) -> None:
+        with _jobs_lock:
+            job = _jobs.get(job_id)
+            if not job or job.get("status") not in {"running", "resuming", "starting"}:
+                return
+            job["status"] = "cancelled"
+            job["finished_at"] = time.time()
+            _persist_job(job)
+            process = _processes.get(job_id)
+            if process is not None:
+                _terminate_job_process(process, job_id)
+
+    def resume(self, job_id: str) -> tuple[bool, str | None]:
+        response = resume_evaluation(job_id)
+        body, status = response if isinstance(response, tuple) else (response, response.status_code)
+        if status >= 400:
+            return False, (body.get_json(silent=True) or {}).get("message")
+        return True, None
+
+
+_experiments = ExperimentScheduler(
+    _EvaluationJobBackend(),
+    concurrency=max(1, int(os.environ.get("SQURVE_EXPERIMENT_CONCURRENCY", "2"))),
+)
+_experiment_ticker_started = False
+_experiment_ticker_lock = threading.Lock()
+
+
+def _start_experiment_ticker() -> None:
+    """Advance queues in the background so cells start without a client polling."""
+    global _experiment_ticker_started
+    if app.config.get("TESTING"):
+        return
+    with _experiment_ticker_lock:
+        if _experiment_ticker_started:
+            return
+        _experiment_ticker_started = True
+
+    def run() -> None:
+        while True:
+            time.sleep(1.0)
+            try:
+                _experiments.tick()
+            except Exception:  # noqa: BLE001 - keep the ticker alive across one bad tick
+                logger.exception("Experiment queue tick failed")
+
+    threading.Thread(target=run, name="experiment-ticker", daemon=True).start()
+
+
+def _experiment_sampling(payload: dict):
+    sampling = payload.get("sampling") or {}
+    if not isinstance(sampling, dict):
+        return None
+    validation = _sampling_request({
+        "sample_limit": sampling.get("limit", 100),
+        "sample_mode": sampling.get("mode", "slice"),
+        "sample_seed": sampling.get("seed", 42),
+    })
+    if len(validation) == 2:
+        return None
+    limit, mode, seed = validation
+    return {"limit": limit, "mode": mode, "seed": seed}
+
+
+def _cell_preflight(method: str, dataset: str, catalog: set[tuple[str, str]]) -> str | None:
+    if (dataset, method) not in catalog:
+        return "config_missing"
+    try:
+        _evaluation_llm_preflight(dataset, method)
+    except ValueError:
+        return "credential_missing"
+    return None
+
+
+@app.post("/api/experiments")
+def create_experiment():
+    payload = request.get_json(silent=True) or {}
+    raw_cells = payload.get("cells")
+    if not isinstance(raw_cells, list) or not raw_cells:
+        return _json_error("Select at least one method × benchmark cell.")
+    cells: list[tuple[str, str]] = []
+    for item in raw_cells:
+        if not isinstance(item, dict):
+            return _json_error("Each cell needs a method and a dataset.")
+        key = (str(item.get("method") or "").strip(), str(item.get("dataset") or "").strip())
+        if key not in cells:
+            cells.append(key)
+    if len(cells) > MAX_CELLS:
+        return _json_error(f"An experiment can hold at most {MAX_CELLS} cells.")
+    sampling = _experiment_sampling(payload)
+    if sampling is None:
+        return _json_error("Sampling needs limit 3, 10, 20, 50, 100, or 200, mode slice or random, and an integer seed.")
+    catalog = {(item["dataset"], item["method"]) for item in _config_catalog()}
+    rejected = [
+        {"method": method, "dataset": dataset, "error_code": code}
+        for method, dataset in cells
+        if (code := _cell_preflight(method, dataset, catalog))
+    ]
+    if rejected:
+        summary = ", ".join(f"{item['method']}/{item['dataset']} ({item['error_code']})" for item in rejected)
+        return jsonify({"status": "error", "message": f"Some cells cannot run yet: {summary}.", "cells": rejected}), 400
+    experiment = _experiments.create(cells, sampling)
+    _start_experiment_ticker()
+    return jsonify(experiment), 202
+
+
+@app.get("/api/experiments")
+def list_experiments():
+    return jsonify({"experiments": _experiments.list()})
+
+
+@app.get("/api/experiments/<experiment_id>")
+def experiment_detail(experiment_id: str):
+    try:
+        return jsonify(_experiments.get(experiment_id))
+    except ExperimentNotFound:
+        return _json_error("Experiment not found.", 404)
+
+
+
+@app.get("/api/experiments/<experiment_id>/events")
+def experiment_events(experiment_id: str):
+    try:
+        cursor = max(0, int(request.args.get("cursor", 0)))
+    except ValueError:
+        return _json_error("cursor must be an integer.")
+    try:
+        events, next_cursor = _experiments.events(experiment_id, cursor)
+        snapshot = _experiments.get(experiment_id)
+    except ExperimentNotFound:
+        return _json_error("Experiment not found.", 404)
+    return jsonify({**snapshot, "events": events, "cursor": next_cursor})
+
+
+@app.post("/api/experiments/<experiment_id>/cancel")
+def cancel_experiment(experiment_id: str):
+    try:
+        return jsonify(_experiments.cancel(experiment_id))
+    except ExperimentNotFound:
+        return _json_error("Experiment not found.", 404)
+
+
+@app.post("/api/experiments/<experiment_id>/cells/<cell_id>/cancel")
+def cancel_experiment_cell(experiment_id: str, cell_id: str):
+    try:
+        return jsonify(_experiments.cancel(experiment_id, cell_id))
+    except ExperimentNotFound:
+        return _json_error("Experiment or cell not found.", 404)
+
+
+@app.post("/api/experiments/<experiment_id>/cells/<cell_id>/resume")
+def resume_experiment_cell(experiment_id: str, cell_id: str):
+    try:
+        return jsonify(_experiments.resume(experiment_id, cell_id)), 202
+    except ExperimentNotFound:
+        return _json_error("Experiment or cell not found.", 404)
+    except ExperimentConflict as exc:
+        return _json_error(str(exc), 409)
+
+
+# --- Results: cross-benchmark comparison -------------------------------------
+# Every number here is a derived evaluation signal read from a run's own
+# scores (run-local evidence); nothing is recomputed or filled in.
+
+_METRIC_LABELS = {
+    "ex": "Execution accuracy",
+    "em": "Exact match",
+    "sf1": "Structure F1",
+    "sc": "Self-consistency",
+    "ves": "Valid efficiency score",
+    "rves": "Relative VES",
+}
+# Simple ids; a dot is allowed but never "..", since some ids end up in file paths.
+_IDENTIFIER = re.compile(r"(?!.*\.\.)[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}")
+_MAX_MATRIX_AXIS = 12
+
+
+def _identifier_list(raw: str) -> list[str] | None:
+    values = list(dict.fromkeys(item.strip() for item in str(raw or "").split(",") if item.strip()))
+    if not values or len(values) > _MAX_MATRIX_AXIS or not all(_IDENTIFIER.fullmatch(item) for item in values):
+        return None
+    return values
+
+
+def _run_metric_values(scores: dict) -> tuple[dict, dict]:
+    values, not_computable = {}, {}
+    for key, item in (scores.get("aggregate") or {}).items():
+        if not _IDENTIFIER.fullmatch(str(key)):
+            continue
+        # Local runs report {"avg": …}; exported evidence bundles flatten to the number.
+        if isinstance(item, (int, float)) and not isinstance(item, bool):
+            values[key] = float(item)
+            continue
+        if not isinstance(item, dict) or "avg" not in item:
+            continue
+        average = item.get("avg")
+        if isinstance(average, (int, float)) and not isinstance(average, bool):
+            values[key] = float(average)
+        else:
+            values[key] = None
+            not_computable[key] = str(item.get("note") or "not_computable")[:160]
+    return values, not_computable
+
+
+def _run_cost(scores: dict) -> dict:
+    aggregate = scores.get("aggregate") or {}
+    token = aggregate.get("token") or {}
+    latency = (aggregate.get("latency") or {}).get("avg_s")
+    # A run that recorded no LLM calls did not track tokens; that is unknown, not zero.
+    tokens = token.get("total_tokens") if token.get("total_calls") else None
+    if not isinstance(latency, (int, float)):
+        sample_latency = [
+            row["latency_ms"] / 1000 for row in scores.get("per_sample") or []
+            if isinstance(row.get("latency_ms"), (int, float))
+        ]
+        latency = sum(sample_latency) / len(sample_latency) if sample_latency else None
+    return {
+        "tokens_total": tokens if isinstance(tokens, (int, float)) else None,
+        "latency_s": float(latency) if isinstance(latency, (int, float)) else None,
+    }
+
+
+def _sample_hash(scores: dict) -> str:
+    # Sorted, so runs over the same questions align whatever order they were recorded in.
+    # Without per-question rows the questions are unknown, so there is nothing to align on.
+    ids = sorted(str(row.get("instance_id")) for row in scores.get("per_sample") or [] if row.get("instance_id") is not None)
+    if not ids:
+        return None
+    return hashlib.sha256("\n".join(ids).encode("utf-8")).hexdigest()[:16]
+
+
+def _load_run_scores(run_dir: Path) -> dict | None:
+    """A run's scores, with per-question rows from an evidence bundle's diagnostics when present."""
+    scores = _read_scores(run_dir / "scores.json")
+    if not scores or scores.get("per_sample"):
+        return scores
+    diagnostics = run_dir / "sample-diagnostics.jsonl"
+    if diagnostics.is_file():
+        rows = []
+        try:
+            for line in diagnostics.read_text(encoding="utf-8").splitlines():
+                record = json.loads(line) if line.strip() else None
+                if isinstance(record, dict) and record.get("instance_id") is not None:
+                    rows.append({
+                        "instance_id": record["instance_id"],
+                        "latency_ms": record.get("latency_ms"),
+                        **{key: value for key, value in (record.get("metrics") or {}).items() if key in {"ex", "em"}},
+                    })
+        except (OSError, ValueError):
+            rows = []
+        scores = {**scores, "per_sample": rows}
+    return scores
+
+
+def _matrix_cell(method: str, dataset: str, scores: dict | None, source: str | None, status: str) -> dict:
+    cell = {
+        "method": method,
+        "dataset": dataset,
+        "status": status,
+        "values": {},
+        "not_computable": {},
+        "cost": {"tokens_total": None, "latency_s": None},
+        "sample_count": None,
+        "sample_hash": None,
+        "run_id": None,
+        "source": source,
+        "timestamp": None,
+    }
+    if scores:
+        values, not_computable = _run_metric_values(scores)
+        cell.update({
+            "values": values,
+            "not_computable": not_computable,
+            "cost": _run_cost(scores),
+            "sample_count": _sanitize_public_scalar(scores.get("sample_count")),
+            "sample_hash": _sample_hash(scores),
+            "run_id": _public_identifier(scores.get("run_id")),
+            "timestamp": _public_timestamp(scores.get("timestamp")),
+        })
+    return cell
+
+
+def _sampling_matches(scores: dict, job: dict | None, split: str, sampling: dict) -> bool:
+    if scores.get("split") != split:
+        return False
+    meta = _sampling_metadata(scores, job)
+    mode = meta.get("mode") or "slice"
+    if mode != sampling["mode"] or meta.get("limit") != sampling["limit"]:
+        return False
+    return mode != "random" or meta.get("seed") == sampling["seed"]
+
+
+def _archived_scores(split: str, sampling: dict) -> dict[tuple[str, str], tuple[dict, str]]:
+    """Latest archived run per (method, dataset) with the requested sampling, and where it came from."""
+    latest: dict[tuple[str, str], tuple[dict, str]] = {}
+    for source, run_dir in _archive_run_dirs():
+        scores = _load_run_scores(run_dir)
+        if not scores:
+            continue
+        job = _read_scores(run_dir.parent / "job.json") if source == "demo-runs" else None
+        if not _sampling_matches(scores, job, split, sampling):
+            continue
+        key = (str(scores.get("method")), str(scores.get("dataset")))
+        previous = latest.get(key)
+        if previous is None or str(scores.get("timestamp") or "") > str(previous[0].get("timestamp") or ""):
+            # Demo runs live in this workspace's session store; everything else is archived evidence.
+            latest[key] = (scores, "session" if source == "demo-runs" else "archive")
+    return latest
+
+
+def _mark_alignment(cells: list[dict], datasets: list[str]) -> dict:
+    alignment = {}
+    for dataset in datasets:
+        measured = [cell for cell in cells if cell["dataset"] == dataset and cell["status"] == "ok" and cell["sample_hash"]]
+        hashes = Counter(cell["sample_hash"] for cell in measured)
+        if not hashes:
+            alignment[dataset] = {"aligned": False, "sample_hash": None, "methods": []}
+            continue
+        # Cells with no per-question rows cannot be shown to share questions with anything.
+        for cell in cells:
+            if cell["dataset"] == dataset and cell["status"] == "ok" and not cell["sample_hash"]:
+                cell["status"] = "unaligned"
+        newest = {cell["sample_hash"]: str(cell.get("timestamp") or "") for cell in measured}
+        reference = max(hashes, key=lambda value: (hashes[value], newest.get(value, "")))
+        for cell in measured:
+            if cell["sample_hash"] != reference:
+                cell["status"] = "unaligned"
+        alignment[dataset] = {
+            "aligned": len(hashes) == 1,
+            "sample_hash": reference,
+            "methods": [cell["method"] for cell in measured if cell["sample_hash"] == reference],
+        }
+    return alignment
+
+
+def _results_matrix(args) -> tuple[dict | None, tuple | None]:
+    methods = _identifier_list(args.get("methods", ""))
+    datasets = _identifier_list(args.get("datasets", ""))
+    if methods is None or datasets is None:
+        return None, _json_error(f"methods and datasets need 1 to {_MAX_MATRIX_AXIS} simple identifiers.")
+    split = str(args.get("split", "dev")).strip()
+    if not _IDENTIFIER.fullmatch(split):
+        return None, _json_error("split must be a simple identifier.")
+    experiment_id = str(args.get("experiment_id") or "").strip()
+    if experiment_id:
+        try:
+            sampling = _experiments.experiment_sampling(experiment_id)
+        except ExperimentNotFound:
+            return None, _json_error("Experiment not found.", 404)
+    else:
+        validation = _sampling_request({
+            "sample_limit": args.get("sample_limit", 100),
+            "sample_mode": args.get("sample_mode", "random"),
+            "sample_seed": args.get("sample_seed", 42),
+        })
+        if len(validation) == 2:
+            return None, validation
+        limit, mode, seed = validation
+        sampling = {"limit": limit, "mode": mode, "seed": seed}
+
+    cells = []
+    archived = {} if experiment_id else _archived_scores(split, sampling)
+    for method in methods:
+        for dataset in datasets:
+            if experiment_id:
+                found = _experiments.cell_job(experiment_id, method, dataset)
+                if found is None:
+                    cells.append(_matrix_cell(method, dataset, None, None, "missing"))
+                    continue
+                cell, scores = found
+                if scores:
+                    cells.append(_matrix_cell(method, dataset, scores, "session", "ok"))
+                else:
+                    # Execution state is reported as observed; a cancelled run is not a failed one.
+                    status = cell.status if cell.status in {"failed", "cancelled"} else "running"
+                    cells.append(_matrix_cell(method, dataset, None, "session", status))
+            else:
+                scores, source = archived.get((method, dataset), (None, None))
+                cells.append(_matrix_cell(method, dataset, scores, source, "ok" if scores else "missing"))
+
+    alignment = _mark_alignment(cells, datasets)
+    metric_ids = list(dict.fromkeys(
+        [key for key in _METRIC_LABELS if any(key in cell["values"] for cell in cells)]
+        + [key for cell in cells for key in cell["values"] if key not in _METRIC_LABELS]
+    ))
+    for cell in cells:
+        cell.pop("timestamp", None)
+    return {
+        "experiment_id": experiment_id or None,
+        "split": split,
+        "sampling": sampling,
+        "methods": methods,
+        "datasets": datasets,
+        "metrics": [
+            {"id": key, "label": _METRIC_LABELS.get(key, key.upper()), "higher_is_better": True}
+            for key in metric_ids
+        ],
+        "cells": cells,
+        "alignment": alignment,
+    }, None
+
+
+@app.get("/api/results/matrix")
+def results_matrix():
+    payload, error = _results_matrix(request.args)
+    return error if error else jsonify(payload)
+
+
+@app.get("/api/results/matrix.csv")
+def results_matrix_csv():
+    payload, error = _results_matrix(request.args)
+    if error:
+        return error
+    metric_ids = [metric["id"] for metric in payload["metrics"]]
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["method", "dataset", "status", *metric_ids, "tokens_total", "latency_s", "sample_count", "run_id"])
+    for cell in payload["cells"]:
+        writer.writerow([
+            cell["method"], cell["dataset"], cell["status"],
+            *("" if cell["values"].get(key) is None else cell["values"][key] for key in metric_ids),
+            "" if cell["cost"]["tokens_total"] is None else cell["cost"]["tokens_total"],
+            "" if cell["cost"]["latency_s"] is None else cell["cost"]["latency_s"],
+            "" if cell["sample_count"] is None else cell["sample_count"],
+            cell["run_id"] or "",
+        ])
+    return app.response_class(
+        buffer.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=squrve-results.csv"},
+    )
+
+
+_DIFF_CATEGORIES = ("both_right", "a_only", "b_only", "both_wrong", "unknown")
+_DIFF_TEXT_LIMIT = 2000
+
+
+def _scores_for_run(run_id: str) -> dict | None:
+    resolved = _resolve_archive_run(run_id)
+    return _load_run_scores(resolved[1]) if resolved else None
+
+
+def _correctness(row: dict | None) -> bool | None:
+    value = (row or {}).get("ex")
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value >= 1
+    return None
+
+
+def _diff_category(a: bool | None, b: bool | None) -> str:
+    if a is None or b is None:
+        return "unknown"
+    if a and b:
+        return "both_right"
+    if a:
+        return "a_only"
+    if b:
+        return "b_only"
+    return "both_wrong"
+
+
+_benchmark_question_cache: dict[tuple[str, float], dict[str, dict]] = {}
+
+
+def _benchmark_questions(dataset: str, split: str) -> dict[str, dict]:
+    """instance_id → {db_id, question} from an installed benchmark split, or {} when absent."""
+    config_dir = _project_root / "config"
+    try:
+        records = json.loads((config_dir / "sys_config.json").read_text(encoding="utf-8")).get("benchmark", [])
+    except (OSError, ValueError, TypeError):
+        return {}
+    record = next((item for item in records if item.get("id") == dataset), None)
+    if not record or not record.get("root_path") or not _IDENTIFIER.fullmatch(split):
+        return {}
+    path = (config_dir / record["root_path"] / split / "dataset.json").resolve()
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return {}
+    key = (str(path), mtime)
+    if key not in _benchmark_question_cache:
+        try:
+            rows = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            rows = []
+        _benchmark_question_cache.clear()
+        _benchmark_question_cache[key] = {
+            str(row.get("instance_id")): {"db_id": row.get("db_id"), "question": row.get("question")}
+            for row in rows if isinstance(row, dict) and row.get("instance_id") is not None
+        }
+    return _benchmark_question_cache[key]
+
+
+def _public_text(value) -> str | None:
+    return value[:_DIFF_TEXT_LIMIT] if isinstance(value, str) else None
+
+
+@app.get("/api/results/diff")
+def results_diff():
+    a_id = str(request.args.get("a") or "").strip()
+    b_id = str(request.args.get("b") or "").strip()
+    if not _safe_archive_run_id(a_id) or not _safe_archive_run_id(b_id):
+        return _json_error("a and b must be run identifiers.")
+    category = str(request.args.get("category") or "").strip()
+    if category and category not in _DIFF_CATEGORIES:
+        return _json_error(f"category must be one of: {', '.join(_DIFF_CATEGORIES)}.")
+    try:
+        limit = min(200, max(1, int(request.args.get("limit", 50))))
+        offset = max(0, int(request.args.get("offset", 0)))
+    except ValueError:
+        return _json_error("limit and offset must be integers.")
+    a_scores, b_scores = _scores_for_run(a_id), _scores_for_run(b_id)
+    if not a_scores or not b_scores:
+        return _json_error("Run not found.", 404)
+    dataset = str(request.args.get("dataset") or "").strip()
+    datasets = {str(a_scores.get("dataset")), str(b_scores.get("dataset"))}
+    if len(datasets) != 1 or (dataset and dataset not in datasets):
+        return jsonify({"status": "error", "code": "different_benchmarks",
+                        "message": "Both runs must be on the same benchmark."}), 409
+    a_hash = _sample_hash(a_scores)
+    if a_hash is None or a_hash != _sample_hash(b_scores):
+        return jsonify({"status": "error", "code": "unaligned",
+                        "message": "These runs answered different questions and cannot be compared question by question."}), 409
+    # The public Space shows which questions each method got right, not the SQL it generated.
+    public_sql = deployment_target() != "hf-space"
+
+    b_rows = {str(row.get("instance_id")): row for row in b_scores.get("per_sample") or []}
+    # Exported evidence keeps only ids and metrics; the installed benchmark supplies the question.
+    installed = _benchmark_questions(str(a_scores.get("dataset") or ""), str(a_scores.get("split") or "dev"))
+    rows = []
+    for a_row in a_scores.get("per_sample") or []:
+        instance_id = str(a_row.get("instance_id"))
+        b_row = b_rows.get(instance_id) or {}
+        a_ok, b_ok = _correctness(a_row), _correctness(b_row)
+        known = installed.get(instance_id, {})
+        db_id = a_row.get("db_id") or b_row.get("db_id") or known.get("db_id")
+        rows.append({
+            "instance_id": _public_identifier(instance_id),
+            "category": _diff_category(a_ok, b_ok),
+            "db_id": _public_identifier(db_id) if db_id else None,
+            "question": _public_text(a_row.get("question") or b_row.get("question") or known.get("question")),
+            "a": {"correct": a_ok, "sql": _public_text(a_row.get("pred_sql")) if public_sql else None},
+            "b": {"correct": b_ok, "sql": _public_text(b_row.get("pred_sql")) if public_sql else None},
+        })
+    summary = {name: sum(1 for row in rows if row["category"] == name) for name in _DIFF_CATEGORIES}
+    selected = [row for row in rows if not category or row["category"] == category]
+
+    def side(scores: dict) -> dict:
+        return {
+            "run_id": _public_identifier(scores.get("run_id")),
+            "method": _public_identifier(scores.get("method")),
+            "dataset": _public_identifier(scores.get("dataset")),
+        }
+
+    return jsonify({
+        "a": side(a_scores),
+        "b": side(b_scores),
+        "summary": summary,
+        "total": len(selected),
+        "offset": offset,
+        "rows": selected[offset:offset + limit],
+    })
 
 @app.post("/api/evaluations/<job_id>/profile")
 def profile_evaluation(job_id: str):

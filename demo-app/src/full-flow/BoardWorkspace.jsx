@@ -16,6 +16,8 @@ export default function BoardWorkspace({
   postJson,
   api,
   onRunStateChange,
+  onExperimentChange,
+  adoptExperimentId = '',
   liveEvaluation = false,
   t,
 }) {
@@ -45,6 +47,8 @@ export default function BoardWorkspace({
         postJson={postJson}
         api={api}
         onRunStateChange={onRunStateChange}
+        onExperimentChange={onExperimentChange}
+        adoptExperimentId={adoptExperimentId}
         liveEvaluation={liveEvaluation}
         t={t}
       />

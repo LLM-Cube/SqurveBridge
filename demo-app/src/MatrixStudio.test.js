@@ -117,11 +117,11 @@ test('switches process pages from the stage tabs', async () => {
   assert.equal(screen.getByTestId('flow-stage').getAttribute('data-active-step'), 'board')
   assert.equal(document.querySelector('#board h2')?.textContent, 'Experiment Board')
 
-  await goToStep(user, 'History')
+  await goToStep(user, 'Compare')
   assert.equal(screen.getByTestId('flow-stage').getAttribute('data-active-step'), 'evidence')
   const tabs = screen.getByRole('navigation', { name: 'Workflow stages' })
   assert.equal(
-    within(tabs).getByRole('button', { name: 'History' }).getAttribute('aria-current'),
+    within(tabs).getByRole('button', { name: 'Compare' }).getAttribute('aria-current'),
     'page',
   )
 })
@@ -607,8 +607,8 @@ test('renders real board controls for config runs', async () => {
   assert.equal(screen.getByRole('button', { name: 'Run config' }).disabled, true)
   assert.equal(document.querySelector('#board .diagnosis-workspace'), null)
   assert.equal(document.querySelector('#board .improvement-workspace'), null)
-  await goToStep(user, 'History')
-  assert.match(document.querySelector('#evidence').textContent, /Run History|No archived runs/)
+  await goToStep(user, 'Compare')
+  assert.match(document.querySelector('#evidence').textContent, /Compare & History|No archived runs/)
   assert.ok(screen.getByTestId('evidence-workspace'))
 })
 
@@ -711,7 +711,7 @@ test('expands archive charts inline without requesting raw files on hosted demo'
   }, { api })
   const user = userEvent.setup()
 
-  await goToStep(user, 'History')
+  await goToStep(user, 'Compare')
   await screen.findByText('run-archive-1')
   await screen.findByRole('button', { name: 'Open run' })
   await user.click(screen.getByRole('button', { name: 'Open run' }))

@@ -20,6 +20,7 @@ export function parseBridgeArgs(argv) {
     tools,
     provider: values.provider || null,
     model: values.model || null,
+    apiBase: values['api-base'] || null,
   }
 }
 
@@ -143,6 +144,140 @@ export function createHostedTools(sdk, config) {
   })
 }
 
+// --- SqurveBridge Demo tools ---------------------------------------------------
+// The Agent reads results and experiment state through the Demo API, and may
+// only *propose* UI actions; the browser runs one only after the user confirms.
+
+const SAFE_ID = /^[A-Za-z0-9._-]{1,128}$/
+const RESULT_TEXT_LIMIT = 12000
+const OPEN_ACTIONS = ['open_experiment', 'open_cell', 'open_query']
+const LOCAL_ACTIONS = ['start_experiment', ...OPEN_ACTIONS]
+let proposalSequence = 0
+
+const textResult = (text, details = {}) => ({ content: [{ type: 'text', text }], details })
+
+async function readApi(fetchImpl, url) {
+  const response = await fetchImpl(url)
+  const body = await response.json().catch(() => ({}))
+  if (!response.ok) return textResult(`Demo API error ${response.status}: ${body?.message || 'request failed'}`)
+  const text = JSON.stringify(body)
+  return textResult(text.length > RESULT_TEXT_LIMIT ? `${text.slice(0, RESULT_TEXT_LIMIT)}… (truncated)` : text)
+}
+
+const idList = value => (Array.isArray(value) ? value : String(value || '').split(','))
+  .map(item => String(item).trim())
+  .filter(Boolean)
+
+export function createSqurveTools({ apiBase, profile, emit, fetchImpl = globalThis.fetch }) {
+  const base = String(apiBase || '').replace(/\/$/, '')
+  const hosted = profile === 'hosted-readonly'
+  const allowedActions = hosted ? OPEN_ACTIONS : LOCAL_ACTIONS
+
+  const results = {
+    name: 'squrve_results',
+    label: 'SqurveBridge results',
+    description: 'Read SqurveBridge comparison results. Give methods and datasets (reproduce config ids such as c3sql, spider) '
+      + 'for the method × benchmark matrix of metric values, cost and sample alignment; optionally experiment_id for one '
+      + 'experiment, or sample_limit/sample_mode/sample_seed for archived runs (recorded evidence uses 100/random/42). '
+      + 'Give diff_a and diff_b run ids to compare two runs question by question instead.',
+    parameters: {
+      type: 'object',
+      properties: {
+        methods: { type: 'array', items: { type: 'string' } },
+        datasets: { type: 'array', items: { type: 'string' } },
+        experiment_id: { type: 'string' },
+        sample_limit: { type: 'number' },
+        sample_mode: { type: 'string', enum: ['slice', 'random'] },
+        sample_seed: { type: 'number' },
+        diff_a: { type: 'string' },
+        diff_b: { type: 'string' },
+      },
+    },
+    async execute(_id, params = {}) {
+      if (params.diff_a || params.diff_b) {
+        if (!SAFE_ID.test(String(params.diff_a || '')) || !SAFE_ID.test(String(params.diff_b || ''))) {
+          return textResult('Invalid run ids for a diff.')
+        }
+        const query = new URLSearchParams({ a: params.diff_a, b: params.diff_b, limit: '50' })
+        return readApi(fetchImpl, `${base}/api/results/diff?${query}`)
+      }
+      const methods = idList(params.methods)
+      const datasets = idList(params.datasets)
+      if (!methods.length || !datasets.length || ![...methods, ...datasets].every(item => SAFE_ID.test(item))) {
+        return textResult('Invalid request: give methods and datasets as simple ids.')
+      }
+      const query = new URLSearchParams({ methods: methods.join(','), datasets: datasets.join(',') })
+      if (params.experiment_id) {
+        if (!SAFE_ID.test(String(params.experiment_id))) return textResult('Invalid experiment id.')
+        query.set('experiment_id', params.experiment_id)
+      } else {
+        query.set('sample_limit', String(params.sample_limit ?? 100))
+        query.set('sample_mode', String(params.sample_mode ?? 'random'))
+        query.set('sample_seed', String(params.sample_seed ?? 42))
+      }
+      return readApi(fetchImpl, `${base}/api/results/matrix?${query}`)
+    },
+  }
+
+  const status = {
+    name: 'squrve_experiment_status',
+    label: 'SqurveBridge experiment status',
+    description: 'Read the status of one experiment (experiment_id) or list this session\'s experiments: per-cell status, progress, queue position and error codes.',
+    parameters: { type: 'object', properties: { experiment_id: { type: 'string' } } },
+    async execute(_id, params = {}) {
+      if (params.experiment_id === undefined || params.experiment_id === '') {
+        return readApi(fetchImpl, `${base}/api/experiments`)
+      }
+      if (!SAFE_ID.test(String(params.experiment_id))) return textResult('Invalid experiment id.')
+      return readApi(fetchImpl, `${base}/api/experiments/${params.experiment_id}`)
+    },
+  }
+
+  const propose = {
+    name: 'squrve_propose_action',
+    label: 'Propose a UI action',
+    description: `Propose an action for the user to confirm in the SqurveBridge UI; nothing runs until they click. Allowed: ${allowedActions.join(', ')}. `
+      + 'start_experiment args: { cells: [{ method, dataset }], sampling: { limit, mode, seed } }. '
+      + 'open_experiment: { experiment_id }. open_cell: { method, dataset }. open_query: { db_id, question, method, dataset }.',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: allowedActions },
+        args: { type: 'object' },
+        reason: { type: 'string' },
+      },
+      required: ['action'],
+    },
+    async execute(_id, params = {}) {
+      const action = String(params.action || '')
+      if (!allowedActions.includes(action)) {
+        return textResult(`Action ${action || '(none)'} is not allowed here. Allowed: ${allowedActions.join(', ')}.`)
+      }
+      proposalSequence += 1
+      emit({
+        type: 'ui_action',
+        id: `proposal-${Date.now()}-${proposalSequence}`,
+        action,
+        args: params.args && typeof params.args === 'object' ? params.args : {},
+        reason: params.reason ? String(params.reason).slice(0, 500) : null,
+      })
+      return textResult(`Proposed ${action}. It runs only if the user confirms it in the UI; do not assume it happened.`)
+    },
+  }
+
+  return hosted ? [results, propose] : [results, status, propose]
+}
+
+const CONTEXT_LIMIT = 4096
+
+/** Append the current page context; a leading /skill: command stays first. */
+export function withPageContext(message, context) {
+  if (!context) return message
+  const text = JSON.stringify(context)
+  if (!text || text === '{}' || text.length > CONTEXT_LIMIT) return message
+  return `${message}\n\n<squrve-page-context>${text}</squrve-page-context>`
+}
+
 export function createInMemoryCredentialStore() {
   const data = new Map()
   return {
@@ -195,6 +330,7 @@ export function createPiAuthProtocol({ modelRuntime, modelRegistry, session, emi
   let promptSequence = 0
   let authAbortController = null
   let authRunning = false
+  let pageContext = null
 
   const providerIds = () => [...new Set(modelRegistry.getAll().map(model => model.provider))]
   const supportsSubscription = provider => Boolean(modelRuntime.getProvider(provider)?.auth?.oauth)
@@ -385,7 +521,11 @@ export function createPiAuthProtocol({ modelRuntime, modelRegistry, session, emi
         return
       }
       emit({ type: 'prompt_accepted' })
-      await session.prompt(String(command.message || ''))
+      await session.prompt(withPageContext(String(command.message || ''), pageContext))
+      return
+    }
+    if (command.type === 'context') {
+      pageContext = command.context && typeof command.context === 'object' ? command.context : null
       return
     }
     if (command.type === 'abort') {
@@ -427,12 +567,16 @@ export async function runBridge(argv = process.argv.slice(2)) {
   }
 
   const hostedTools = config.profile === 'hosted-readonly' ? createHostedTools(sdk, config) : null
+  const squrveTools = config.apiBase
+    ? createSqurveTools({ apiBase: config.apiBase, profile: config.profile, emit: writeEvent })
+    : []
+  const customTools = [...(hostedTools || []), ...squrveTools]
   const { session } = await sdk.createAgentSession({
     cwd: config.cwd,
     model,
-    tools: config.tools,
+    tools: [...config.tools, ...squrveTools.map(tool => tool.name)],
     noTools: hostedTools ? 'builtin' : undefined,
-    customTools: hostedTools || undefined,
+    customTools: customTools.length ? customTools : undefined,
     resourceLoader,
     modelRuntime,
     settingsManager: settingsManager || undefined,

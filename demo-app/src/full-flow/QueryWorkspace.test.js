@@ -314,3 +314,21 @@ test('pressing Enter in the question box runs the pipeline; Shift+Enter adds a n
   const [, body] = calls.find(([path]) => path === '/api/query')
   assert.equal(body.question, 'line one\nline two')
 })
+
+test('a question replayed from the comparison runs with that method', async () => {
+  const calls = []
+  renderWorkspace({
+    prefill: { id: 3, dbId: 'concert_singer', question: 'How many singers are there?', method: 'c3sql' },
+    postJson: async (path, body) => {
+      calls.push([path, body])
+      if (path === '/api/query') return { status: 'success', sql: 'SELECT count(*) FROM singer', trace: [] }
+      return { status: 'success', columns: ['n'], rows: [[6]], row_count: 1, truncated: false, elapsed_ms: 3 }
+    },
+  })
+  assert.equal(screen.getByLabelText('Database').value, 'concert_singer')
+  assert.equal(screen.getByLabelText('Natural-language question').value, 'How many singers are there?')
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Run pipeline' }))
+  const query = calls.find(([path]) => path === '/api/query')
+  assert.equal(query[1].method, 'c3sql')
+  assert.equal(query[1].question, 'How many singers are there?')
+})

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
+  SAMPLE_LIMITS,
   configKey,
   connectionKeyOf,
   resolveFocusedConfig,
@@ -17,8 +18,7 @@ export const RUN_PHASES = [
   'failed',
 ]
 
-const SAMPLE_LIMITS = [3, 10, 20, 50, 100, 200]
-const MAX_BATCH_TARGETS = 6
+const MAX_BATCH_TARGETS = 24
 
 export const INITIAL_RUN_STATE = {
   phase: 'ready',
@@ -101,7 +101,35 @@ const jobTone = status => {
   return 'pending'
 }
 
-const isActiveJob = job => ['running', 'resuming', 'starting'].includes(job?.status)
+const isActiveJob = job => ['queued', 'running', 'resuming', 'starting'].includes(job?.status)
+const QUEUED_PREFIX = 'queued:'
+const isLaunchedJob = job => Boolean(job?.job_id) && !String(job.job_id).startsWith(QUEUED_PREFIX)
+
+/** One row per experiment cell: launched cells keep their known job detail, queued ones get a placeholder. */
+export function jobsFromExperiment(experiment, previousJobs = []) {
+  if (!experiment?.cells) return previousJobs
+  const known = new Map(previousJobs.map(job => [job.job_id, job]))
+  return experiment.cells.map(cell => {
+    if (!cell.job_id) {
+      return {
+        job_id: `${QUEUED_PREFIX}${cell.cell_id}`,
+        method: cell.method,
+        dataset: cell.dataset,
+        status: cell.status,
+        queue_position: cell.queue_position,
+        error_code: cell.error_code,
+      }
+    }
+    const previous = known.get(cell.job_id) || { job_id: cell.job_id, method: cell.method, dataset: cell.dataset }
+    return {
+      ...previous,
+      status: TERMINAL_JOB_STATUSES.has(previous.status) && !TERMINAL_JOB_STATUSES.has(cell.status)
+        ? previous.status
+        : cell.status,
+      error_code: cell.error_code,
+    }
+  })
+}
 
 const TERMINAL_JOB_STATUSES = new Set(['completed', 'failed', 'cancelled'])
 
@@ -347,6 +375,8 @@ export default function RunWorkspace({
   postJson,
   api,
   onRunStateChange,
+  onExperimentChange,
+  adoptExperimentId = '',
   liveEvaluation = false,
   t,
 }) {
@@ -357,6 +387,7 @@ export default function RunWorkspace({
   const focusedKey = configKey(focusedMethod, focusedDatabase)
 
   const [jobs, setJobs] = useState([])
+  const [experiment, setExperiment] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [selectedJobId, setSelectedJobId] = useState('')
@@ -419,6 +450,7 @@ export default function RunWorkspace({
   const refreshJobs = async current => {
     if (!api || !current.length) return current
     return Promise.all(current.map(async job => {
+      if (!isLaunchedJob(job)) return job
       try {
         return await api(`/api/evaluations/${job.job_id}`)
       } catch {
@@ -440,11 +472,34 @@ export default function RunWorkspace({
     return () => { active = false }
   }, [api])
 
+  // An experiment started elsewhere (the Agent, after the user confirmed) is shown here too.
+  useEffect(() => {
+    if (!api || !adoptExperimentId || experiment?.experiment_id === adoptExperimentId) return undefined
+    let active = true
+    api(`/api/experiments/${adoptExperimentId}`).then(latest => {
+      if (!active || !latest?.cells) return
+      const adopted = jobsFromExperiment(latest, [])
+      setExperiment(latest)
+      setJobs(adopted)
+      setSelectedJobId(adopted[0]?.job_id || '')
+      publishRunState(phaseFromJobs(adopted))
+    }).catch(() => {})
+    return () => { active = false }
+  }, [api, adoptExperimentId])
+
   useEffect(() => {
     if (!jobs.some(isActiveJob) || !api) return undefined
     let active = true
     const timer = setInterval(() => {
-      refreshJobs(jobs).then(next => {
+      const withCells = experiment?.experiment_id
+        ? api(`/api/experiments/${experiment.experiment_id}`)
+          .then(latest => {
+            setExperiment(latest)
+            return jobsFromExperiment(latest, jobs)
+          })
+          .catch(() => jobs)
+        : Promise.resolve(jobs)
+      withCells.then(refreshJobs).then(next => {
         if (!active) return
         setJobs(next)
         publishRunState(phaseFromJobs(next))
@@ -454,10 +509,10 @@ export default function RunWorkspace({
       active = false
       clearInterval(timer)
     }
-  }, [jobs, api])
+  }, [jobs, api, experiment?.experiment_id])
 
   useEffect(() => {
-    if (!api || !selectedJobId) {
+    if (!api || !selectedJobId || String(selectedJobId).startsWith(QUEUED_PREFIX)) {
       setLog('')
       return undefined
     }
@@ -502,12 +557,15 @@ export default function RunWorkspace({
           method: pairs[0].method,
         })
         nextJobs = [job]
+        setExperiment(null)
       } else {
-        const data = await postJson('/api/comparisons', {
-          ...payload,
-          pairs,
+        const created = await postJson('/api/experiments', {
+          cells: pairs,
+          sampling: { limit: sampleLimit, mode: sampleMode, seed: sampleSeed },
         })
-        nextJobs = Array.isArray(data.jobs) ? data.jobs : []
+        setExperiment(created)
+        onExperimentChange?.(created.experiment_id)
+        nextJobs = jobsFromExperiment(created, [])
       }
       setJobs(nextJobs)
       setSelectedJobId(nextJobs[0]?.job_id || '')
@@ -527,8 +585,15 @@ export default function RunWorkspace({
     setBusy(true)
     setError('')
     try {
-      await Promise.all(activeJobs.map(job => postJson(`/api/evaluations/${job.job_id}/cancel`, {})))
-      const next = await refreshJobs(jobs)
+      let current = jobs
+      if (experiment?.experiment_id) {
+        const latest = await postJson(`/api/experiments/${experiment.experiment_id}/cancel`, {})
+        setExperiment(latest)
+        current = jobsFromExperiment(latest, jobs)
+      } else {
+        await Promise.all(activeJobs.map(job => postJson(`/api/evaluations/${job.job_id}/cancel`, {})))
+      }
+      const next = await refreshJobs(current)
       setJobs(next)
       publishRunState(phaseFromJobs(next))
     } catch (err) {

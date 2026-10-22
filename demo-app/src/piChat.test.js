@@ -52,3 +52,15 @@ test('formats project skills with Pi native command syntax', async () => {
   assert.equal(skillPrompt('run'), '/skill:run')
   assert.equal(skillPrompt('candidate-reader', 'https://github.com/example/repo'), '/skill:candidate-reader https://github.com/example/repo')
 })
+
+test('ui_action events become pending proposals the user can confirm or dismiss', async () => {
+  const { applyPiEvent, createPiChatState, resolveProposal } = await chatModule()
+  let state = createPiChatState()
+  state = applyPiEvent(state, { type: 'ui_action', id: 'p1', action: 'open_cell', args: { method: 'c3sql', dataset: 'spider' }, reason: 'Look here' })
+  assert.deepEqual(state.proposals, [
+    { id: 'p1', action: 'open_cell', args: { method: 'c3sql', dataset: 'spider' }, reason: 'Look here', status: 'pending' },
+  ])
+  state = resolveProposal(state, 'p1', 'confirmed')
+  assert.equal(state.proposals[0].status, 'confirmed')
+  assert.deepEqual(resolveProposal(state, 'missing', 'dismissed'), state)
+})

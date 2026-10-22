@@ -4,12 +4,14 @@ import BoardWorkspace from './BoardWorkspace.jsx'
 import ConfigurationStudio from './ConfigurationStudio.jsx'
 import ConnectionComposer from './ConnectionComposer.jsx'
 import EvidenceHub from './EvidenceHub.jsx'
+import ExperimentGrid from './ExperimentGrid.jsx'
 import QueryWorkspace from './QueryWorkspace.jsx'
 import {
   DATABASES,
   METHODS,
   ensureConnection,
   resolveFocusedConfig,
+  selectGridLine,
   selectedDatabasesFromConnections,
   selectedMethodsFromConnections,
   toggleConnection,
@@ -17,6 +19,8 @@ import {
 } from './model.js'
 import { PROCESS_STEPS, resolveProcessStep } from './processSteps.js'
 import { INITIAL_RUN_STATE } from './RunWorkspace.jsx'
+import { displayNamesFor } from './resultsModel.js'
+import { normalizeProposal, pageContextFor } from '../agentActions.js'
 import { FlowStatus } from './flowUi.jsx'
 import './full-flow.css'
 import './agent-shell.css'
@@ -31,6 +35,7 @@ const SPLIT_STORAGE_KEY = 'squrve-demo-shell-layout'
 // from touching pages whose props did not change.
 const MemoConfigurationStudio = memo(ConfigurationStudio)
 const MemoConnectionComposer = memo(ConnectionComposer)
+const MemoExperimentGrid = memo(ExperimentGrid)
 const MemoQueryWorkspace = memo(QueryWorkspace)
 const MemoBoardWorkspace = memo(BoardWorkspace)
 const MemoEvidenceHub = memo(EvidenceHub)
@@ -73,6 +78,9 @@ export default function FullFlowDemo({
   const [sampleMode, setSampleMode] = useState('slice')
   const [sampleSeed, setSampleSeed] = useState(42)
   const [runState, setRunState] = useState(INITIAL_RUN_STATE)
+  const [experimentId, setExperimentId] = useState('')
+  const [queryPrefill, setQueryPrefill] = useState(null)
+  const [adoptedExperimentId, setAdoptedExperimentId] = useState('')
   const [chatKey, setChatKey] = useState(0)
   const [harnessTask, setHarnessTask] = useState(null)
   const [shellLayout, setShellLayout] = useState(loadShellLayout)
@@ -163,10 +171,55 @@ export default function FullFlowDemo({
     syncFocus(next)
   }, [commitConnections, applyFocus, syncFocus])
 
+  const onSelectGridLine = useCallback(line => {
+    syncFocus(commitConnections(selectGridLine(connectionsRef.current, configs, line)))
+  }, [commitConnections, syncFocus, configs])
+
   const onFocusConnection = useCallback((method, database) => {
     commitConnections(ensureConnection(connectionsRef.current, method, database))
     applyFocus(method, database)
   }, [commitConnections, applyFocus])
+
+  // Replay one question from the per-question diff in Query, with the method's
+  // workflow focused so the query runs the same actors as the recorded run.
+  const replayInQuery = useCallback(({ method, dataset, db_id: dbId, question }) => {
+    const names = displayNamesFor(method, dataset)
+    if (names) onFocusConnection(names.method, names.database)
+    setQueryPrefill({ id: Date.now(), dbId, question, method })
+    navigateToStep('query')
+    setMobilePane('dashboard')
+  }, [onFocusConnection, navigateToStep])
+
+  const agentPageContext = useMemo(() => pageContextFor({
+    activeStep, experimentId, connections, configs, focusedMethod, focusedDatabase,
+  }), [activeStep, experimentId, connections, configs, focusedMethod, focusedDatabase])
+
+  // Runs an Agent proposal the user has just confirmed; anything the page does
+  // not recognise, or that the deployment does not allow, is refused here.
+  const runAgentAction = useCallback(async proposal => {
+    const safe = normalizeProposal(proposal, { hosted: credentialMode !== 'local' })
+    if (!safe) throw new Error(t('agent.proposalRejected'))
+    const { action, args } = safe
+    if (action === 'start_experiment') {
+      const created = await postJson('/api/experiments', args)
+      setExperimentId(created.experiment_id)
+      setAdoptedExperimentId(created.experiment_id)
+      navigateToStep('board')
+      return
+    }
+    if (action === 'open_experiment') {
+      setExperimentId(args.experiment_id)
+      navigateToStep('evidence')
+      return
+    }
+    if (action === 'open_cell') {
+      const names = displayNamesFor(args.method, args.dataset)
+      if (names) onFocusConnection(names.method, names.database)
+      navigateToStep('evidence')
+      return
+    }
+    replayInQuery(args)
+  }, [credentialMode, postJson, navigateToStep, onFocusConnection, replayInQuery, t])
 
   const adoptSqlFromAgent = useCallback(sql => {
     setAdoptedSql({ id: Date.now(), sql })
@@ -220,6 +273,18 @@ export default function FullFlowDemo({
       />
     ),
     compose: (
+      <>
+      <MemoExperimentGrid
+        api={api}
+        configs={configs}
+        connections={connections}
+        sampleLimit={sampleLimit}
+        sampleMode={sampleMode}
+        sampleSeed={sampleSeed}
+        onToggleConnection={onToggleConnection}
+        onSelectLine={onSelectGridLine}
+        t={t}
+      />
       <MemoConnectionComposer
         selectedMethods={selectedMethods}
         selectedDatabases={selectedDatabases}
@@ -232,6 +297,7 @@ export default function FullFlowDemo({
         focusedConfig={focusedConfig}
         t={t}
       />
+      </>
     ),
     query: (
       <MemoQueryWorkspace
@@ -248,6 +314,7 @@ export default function FullFlowDemo({
         adoptedSql={adoptedSql}
         onAdoptedSqlHandled={onAdoptedSqlHandled}
         onAskPi={askPiFromQuery}
+        prefill={queryPrefill}
         t={t}
       />
     ),
@@ -268,6 +335,8 @@ export default function FullFlowDemo({
         postJson={postJson}
         api={api}
         onRunStateChange={onRunStateChange}
+        onExperimentChange={setExperimentId}
+        adoptExperimentId={adoptedExperimentId}
         liveEvaluation={Boolean(capabilities?.deployment?.features?.live_evaluation)}
         t={t}
       />
@@ -284,6 +353,10 @@ export default function FullFlowDemo({
         sampleLimit={sampleLimit}
         sampleMode={sampleMode}
         sampleSeed={sampleSeed}
+        configs={configs}
+        connections={connections}
+        experimentId={experimentId}
+        onReplay={replayInQuery}
         t={t}
       />
     ),
@@ -546,6 +619,8 @@ export default function FullFlowDemo({
                   onQueuedCommandSent={onQueuedCommandSent}
                   onRequestNewChat={onRequestNewChat}
                   onAdoptSql={adoptSqlFromAgent}
+                  pageContext={agentPageContext}
+                  onAgentAction={runAgentAction}
                 />
               </Suspense>
             ) : (
