@@ -22,6 +22,8 @@ import { INITIAL_RUN_STATE } from './RunWorkspace.jsx'
 import { displayNamesFor } from './resultsModel.js'
 import { normalizeProposal, pageContextFor } from '../agentActions.js'
 import { FlowStatus } from './flowUi.jsx'
+import { addVariant, removeVariant } from './variantModel.js'
+import { agentEnabledIn } from '../runtimeMode.js'
 import './full-flow.css'
 import './agent-shell.css'
 import './ui-enhancements.css'
@@ -63,6 +65,8 @@ export default function FullFlowDemo({
   credentialMode = 'session',
 }) {
   const configs = capabilities?.reproduce_configs || []
+  // A showcase deployment turns the Agent off on the server; the page then has no Agent pane.
+  const agentEnabled = agentEnabledIn(capabilities)
   const [locale, setLocale] = useState(() => detectLocale(
     navigator.language,
     window.localStorage.getItem('squrve-demo-locale'),
@@ -86,6 +90,8 @@ export default function FullFlowDemo({
   const [shellLayout, setShellLayout] = useState(loadShellLayout)
   const [mobilePane, setMobilePane] = useState('dashboard')
   const [adoptedSql, setAdoptedSql] = useState(null)
+  // Actor-swap variants built in Compose; each runs as its own experiment cell.
+  const [variants, setVariants] = useState([])
   const splitRef = useRef(null)
   const shellRef = useRef(null)
   const dividerGhostRef = useRef(null)
@@ -182,10 +188,17 @@ export default function FullFlowDemo({
 
   // Replay one question from the per-question diff in Query, with the method's
   // workflow focused so the query runs the same actors as the recorded run.
-  const replayInQuery = useCallback(({ method, dataset, db_id: dbId, question }) => {
+  const onAddVariant = useCallback((config, stages) => {
+    setVariants(current => addVariant(current, config, stages))
+  }, [])
+  const onRemoveVariant = useCallback(identity => {
+    setVariants(current => removeVariant(current, identity))
+  }, [])
+
+  const replayInQuery = useCallback(({ method, stages, dataset, db_id: dbId, question }) => {
     const names = displayNamesFor(method, dataset)
     if (names) onFocusConnection(names.method, names.database)
-    setQueryPrefill({ id: Date.now(), dbId, question, method })
+    setQueryPrefill({ id: Date.now(), dbId, question, method, stages })
     navigateToStep('query')
     setMobilePane('dashboard')
   }, [onFocusConnection, navigateToStep])
@@ -295,6 +308,10 @@ export default function FullFlowDemo({
         onFocusConnection={onFocusConnection}
         configs={configs}
         focusedConfig={focusedConfig}
+        stageActors={capabilities?.stage_actors}
+        variants={variants}
+        onAddVariant={onAddVariant}
+        onRemoveVariant={onRemoveVariant}
         t={t}
       />
       </>
@@ -313,7 +330,7 @@ export default function FullFlowDemo({
         api={api}
         adoptedSql={adoptedSql}
         onAdoptedSqlHandled={onAdoptedSqlHandled}
-        onAskPi={askPiFromQuery}
+        onAskPi={agentEnabled ? askPiFromQuery : undefined}
         prefill={queryPrefill}
         t={t}
       />
@@ -338,6 +355,7 @@ export default function FullFlowDemo({
         onExperimentChange={setExperimentId}
         adoptExperimentId={adoptedExperimentId}
         liveEvaluation={Boolean(capabilities?.deployment?.features?.live_evaluation)}
+        variants={variants}
         t={t}
       />
     ),
@@ -369,8 +387,8 @@ export default function FullFlowDemo({
   const projectLabel = focusedConfig
     ? `${focusedConfig.method} · ${focusedConfig.dataset}`
     : t('shell.workspace')
-  const dashboardCollapsed = shellLayout.dashboardCollapsed && !shellLayout.agentCollapsed
-  const agentCollapsed = shellLayout.agentCollapsed && !shellLayout.dashboardCollapsed
+  const dashboardCollapsed = agentEnabled && shellLayout.dashboardCollapsed && !shellLayout.agentCollapsed
+  const agentCollapsed = agentEnabled && shellLayout.agentCollapsed && !shellLayout.dashboardCollapsed
   const shellStyle = {
     '--dashboard-width': `${shellLayout.dashboardWidth}%`,
   }
@@ -442,7 +460,7 @@ export default function FullFlowDemo({
         'flow-demo agent-shell',
         dashboardCollapsed ? 'dashboard-collapsed' : '',
         agentCollapsed ? 'agent-collapsed' : '',
-        `mobile-pane-${mobilePane}`,
+        agentEnabled ? `mobile-pane-${mobilePane}` : 'agent-off',
       ].filter(Boolean).join(' ')}
       data-testid="agent-shell"
       style={shellStyle}
@@ -451,6 +469,7 @@ export default function FullFlowDemo({
         {t(credentialMode === 'local' ? 'local.notice' : 'hosted.notice')}
       </div>
 
+      {agentEnabled ? (
       <div className="agent-mobile-switcher" role="tablist" aria-label={t('shell.workspace')}>
         <button type="button" role="tab" aria-selected={mobilePane === 'dashboard'} onClick={() => setMobilePane('dashboard')}>
           {t('shell.liveWorkspace')}
@@ -459,6 +478,7 @@ export default function FullFlowDemo({
           {t('shell.piBackend')}
         </button>
       </div>
+      ) : null}
 
       <div className="agent-shell-panes" ref={splitRef}>
         <section className="agent-dashboard-pane" aria-label={t('shell.liveWorkspace')}>
@@ -479,14 +499,16 @@ export default function FullFlowDemo({
                 <button type="button" aria-label={languageLabel} onClick={() => setLocale(nextLocale)}>
                   {languageLabel}
                 </button>
-                <button
-                  type="button"
-                  className="agent-pane-toggle"
-                  aria-label={t('shell.collapseDashboard')}
-                  onClick={() => setCollapsed('dashboard')}
-                >
-                  ‹
-                </button>
+                {agentEnabled ? (
+                  <button
+                    type="button"
+                    className="agent-pane-toggle"
+                    aria-label={t('shell.collapseDashboard')}
+                    onClick={() => setCollapsed('dashboard')}
+                  >
+                    ‹
+                  </button>
+                ) : null}
               </div>
             </header>
             <nav className="agent-stage-tabs" aria-label={t('shell.stageTabs')}>
@@ -550,6 +572,8 @@ export default function FullFlowDemo({
           </div>
         </section>
 
+        {agentEnabled ? (
+        <>
         <button
           className="agent-dashboard-restore"
           type="button"
@@ -641,6 +665,8 @@ export default function FullFlowDemo({
           <span>π</span>
           <b>{t('shell.piBackend')}</b>
         </button>
+        </>
+        ) : null}
       </div>
     </main>
   )

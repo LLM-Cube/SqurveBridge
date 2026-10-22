@@ -88,13 +88,13 @@ test('grouped bars hold one group per benchmark and only comparable values', () 
   const groups = groupedBars(matrix, 'ex', ['c3sql', 'dinsql'])
   assert.deepEqual(groups.map(group => group.dataset), ['spider', 'bird'])
   assert.deepEqual(groups[0].bars, [
-    { method: 'c3sql', value: 0.8, text: '80.0%', slot: 1 },
-    { method: 'dinsql', value: 0.77, text: '77.0%', slot: 2 },
+    { method: 'c3sql', label: 'c3sql', value: 0.8, text: '80.0%', slot: 1 },
+    { method: 'dinsql', label: 'dinsql', value: 0.77, text: '77.0%', slot: 2 },
   ])
   assert.deepEqual(groups[1].bars, [], 'missing and unaligned cells are not drawn as bars')
   assert.deepEqual(groups[1].absent, [
-    { method: 'c3sql', status: 'missing' },
-    { method: 'dinsql', status: 'unaligned' },
+    { method: 'c3sql', label: 'c3sql', status: 'missing' },
+    { method: 'dinsql', label: 'dinsql', status: 'unaligned' },
   ])
 })
 
@@ -125,7 +125,10 @@ test('costScatter plots comparable cells that report the chosen cost', () => {
 
 test('diffCandidates offers only comparable runs, grouped by benchmark', () => {
   assert.deepEqual(diffCandidates(costed), {
-    spider: [{ method: 'c3sql', runId: 'run-c3' }, { method: 'dinsql', runId: 'run-din' }],
+    spider: [
+      { method: 'c3sql', label: 'c3sql', runId: 'run-c3' },
+      { method: 'dinsql', label: 'dinsql', runId: 'run-din' },
+    ],
   })
   assert.deepEqual(diffCandidates({ ...costed, cells: [costed.cells[0]] }), {}, 'one run has nothing to compare against')
 })
@@ -134,4 +137,21 @@ test('displayNamesFor maps config ids back to Compose labels', () => {
   assert.deepEqual(displayNamesFor('gpt-baseline', 'BookSQL'), { method: 'GPT Baseline', database: 'BookSQL' })
   assert.deepEqual(displayNamesFor('c3sql', 'ehrsql-2024'), { method: 'C3SQL', database: 'EHRSQL-2024' })
   assert.equal(displayNamesFor('nope', 'spider'), null)
+})
+
+test('a variant column is shown by the label the server gives it', () => {
+  const variant = 'c3sql.var-1a2b3c'
+  const labelled = {
+    methods: ['c3sql', variant],
+    labels: { c3sql: 'c3sql', [variant]: 'c3sql · c3sql_generate→FINSQLGenerator' },
+    datasets: ['spider'],
+    metrics: [{ id: 'ex', label: 'Execution accuracy' }],
+    cells: [
+      cell('c3sql', 'spider', 'ok', { ex: 0.5 }, { run_id: 'run-a' }),
+      cell(variant, 'spider', 'ok', { ex: 0.7 }, { run_id: 'run-b' }),
+    ],
+  }
+  assert.deepEqual(heatmapRows(labelled, 'ex').map(row => row.label), ['c3sql', 'c3sql · c3sql_generate→FINSQLGenerator'])
+  assert.equal(groupedBars(labelled, 'ex', labelled.methods)[0].bars[1].label, 'c3sql · c3sql_generate→FINSQLGenerator')
+  assert.deepEqual(diffCandidates(labelled).spider.map(run => run.label), ['c3sql', 'c3sql · c3sql_generate→FINSQLGenerator'])
 })

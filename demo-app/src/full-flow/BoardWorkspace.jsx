@@ -19,6 +19,7 @@ export default function BoardWorkspace({
   onExperimentChange,
   adoptExperimentId = '',
   liveEvaluation = false,
+  variants = [],
   t,
 }) {
   return (
@@ -50,6 +51,7 @@ export default function BoardWorkspace({
         onExperimentChange={onExperimentChange}
         adoptExperimentId={adoptExperimentId}
         liveEvaluation={liveEvaluation}
+        variants={variants}
         t={t}
       />
     </section>

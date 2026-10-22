@@ -6,6 +6,7 @@ import {
   resolveFocusedConfig,
   withConnectionKeys,
 } from './model.js'
+import { experimentCells, variantLabel } from './variantModel.js'
 
 export const RUN_PHASES = [
   'ready',
@@ -115,6 +116,7 @@ export function jobsFromExperiment(experiment, previousJobs = []) {
         job_id: `${QUEUED_PREFIX}${cell.cell_id}`,
         method: cell.method,
         dataset: cell.dataset,
+        label: cell.label,
         status: cell.status,
         queue_position: cell.queue_position,
         error_code: cell.error_code,
@@ -123,6 +125,7 @@ export function jobsFromExperiment(experiment, previousJobs = []) {
     const previous = known.get(cell.job_id) || { job_id: cell.job_id, method: cell.method, dataset: cell.dataset }
     return {
       ...previous,
+      label: cell.label,
       status: TERMINAL_JOB_STATUSES.has(previous.status) && !TERMINAL_JOB_STATUSES.has(cell.status)
         ? previous.status
         : cell.status,
@@ -378,6 +381,7 @@ export default function RunWorkspace({
   onExperimentChange,
   adoptExperimentId = '',
   liveEvaluation = false,
+  variants = [],
   t,
 }) {
   const connections = useMemo(
@@ -441,7 +445,7 @@ export default function RunWorkspace({
   const activeJobs = jobs.filter(isActiveJob)
   const runnable = Boolean(
     liveEvaluation
-    && runTargets.length >= 1
+    && runTargets.length + variants.length >= 1
     && !busy
     && !activeJobs.length,
   )
@@ -550,7 +554,7 @@ export default function RunWorkspace({
         sample_seed: sampleSeed,
       }
       let nextJobs = []
-      if (pairs.length === 1) {
+      if (pairs.length === 1 && !variants.length) {
         const job = await postJson('/api/evaluations', {
           ...payload,
           dataset: pairs[0].dataset,
@@ -559,8 +563,9 @@ export default function RunWorkspace({
         nextJobs = [job]
         setExperiment(null)
       } else {
+        // Variants always run as experiment cells, next to the configs they came from.
         const created = await postJson('/api/experiments', {
-          cells: pairs,
+          cells: experimentCells(runTargets.map(item => item.config), variants),
           sampling: { limit: sampleLimit, mode: sampleMode, seed: sampleSeed },
         })
         setExperiment(created)
@@ -569,7 +574,7 @@ export default function RunWorkspace({
       }
       setJobs(nextJobs)
       setSelectedJobId(nextJobs[0]?.job_id || '')
-      onFocusConnection?.(runTargets[0].method, runTargets[0].database)
+      if (runTargets[0]) onFocusConnection?.(runTargets[0].method, runTargets[0].database)
       publishRunState(phaseFromJobs(nextJobs))
     } catch (err) {
       const message = sanitizeRunError(err)
@@ -671,6 +676,14 @@ export default function RunWorkspace({
                 : t('status.unavailable')}
             </dd>
           </div>
+          {variants.length ? (
+            <div>
+              <dt>{t('variants.runLabel')}</dt>
+              <dd data-testid="run-variants">
+                {variants.map(item => `${variantLabel(item.method, item.stages)} / ${item.dataset}`).join(', ')}
+              </dd>
+            </div>
+          ) : null}
           <div>
             <dt>{t('run.configPath')}</dt>
             <dd>{primaryConfig?.config_path || t('status.unavailable')}</dd>
@@ -768,7 +781,7 @@ export default function RunWorkspace({
                     onClick={() => setSelectedJobId(job.job_id)}
                   >
                     <span className="run-batch-job-main">
-                      <strong>{job.method} / {job.dataset}</strong>
+                      <strong>{job.label || job.method} / {job.dataset}</strong>
                       <span className="run-batch-job-status">{job.status}</span>
                     </span>
                     {(resumeLabel || isResumableJob(job)) && (

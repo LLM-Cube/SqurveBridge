@@ -251,6 +251,10 @@ export default function ConnectionComposer({
   onFocusConnection,
   configs,
   focusedConfig,
+  stageActors,
+  variants,
+  onAddVariant,
+  onRemoveVariant,
   t,
 }) {
   const readyKeys = useMemo(() => buildReadyKeys(configs), [configs])
@@ -711,7 +715,14 @@ export default function ConnectionComposer({
           onFocusConnection={focusConnection}
           onRemoveConnection={removeConnection}
         />
-        <MemoActorWorkflow focusedConfig={focusedConfig} t={t} />
+        <MemoActorWorkflow
+          focusedConfig={focusedConfig}
+          stageActors={stageActors}
+          variants={variants}
+          onAddVariant={onAddVariant}
+          onRemoveVariant={onRemoveVariant}
+          t={t}
+        />
         <MemoIntegrationProvenance focusedConfig={focusedConfig} t={t} />
       </aside>
     </div>

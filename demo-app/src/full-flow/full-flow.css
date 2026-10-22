@@ -6410,3 +6410,86 @@
 .flow-demo .results-diff-replay button { border: 1px solid #e0d5c1; border-radius: 6px; padding: 2px 8px; background: #fff; color: var(--viz-ink); font-size: 11px; white-space: nowrap; }
 .flow-demo .results-diff-table td:last-child { width: 1%; white-space: nowrap; }
 .flow-demo .results-diff-replay { flex-direction: column; flex-wrap: nowrap; align-items: stretch; }
+
+/* Actor swaps and the variants they make (Compose → Actor workflow). */
+.flow-demo .flow-actor-workflow li select {
+  width: 100%;
+  min-width: 0;
+  margin-top: 4px;
+  border: 1px solid var(--flow-border-strong);
+  border-radius: 8px;
+  padding: 6px 8px;
+  color: var(--flow-text);
+  background: var(--flow-panel-soft);
+  font: 650 var(--flow-type-control)/1.4 "SF Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.flow-demo .flow-actor-workflow li[data-swapped="true"] {
+  border-color: var(--flow-blue);
+}
+
+.flow-demo .flow-variant-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 14px;
+}
+
+.flow-demo .flow-variant-actions button,
+.flow-demo .flow-variant-list button {
+  border: 1px solid var(--flow-border-strong);
+  border-radius: 8px;
+  padding: 6px 12px;
+  color: var(--flow-text);
+  background: var(--flow-panel-soft);
+  cursor: pointer;
+}
+
+.flow-demo .flow-variant-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.flow-demo .flow-variant-actions p {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--flow-muted);
+  font-size: var(--flow-type-meta);
+  line-height: 1.5;
+}
+
+.flow-demo .flow-variant-list {
+  margin-top: 16px;
+}
+
+.flow-demo .flow-variant-list h4 {
+  margin: 0 0 8px;
+  font-size: var(--flow-type-control);
+}
+
+.flow-demo .flow-variant-list ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.flow-demo .flow-variant-list li {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  font-size: var(--flow-type-meta);
+}
+
+.flow-demo .flow-variant-list li span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.flow-demo .experiment-grid td[data-installed="false"] {
+  opacity: 0.6;
+}

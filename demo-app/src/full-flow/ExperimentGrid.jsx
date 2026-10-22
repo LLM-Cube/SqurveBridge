@@ -77,8 +77,15 @@ export default function ExperimentGrid({
                   </button>
                 </th>
                 {row.cells.map(cell => (
-                  <td key={cell.database} data-runnable={cell.runnable} data-selected={cell.selected}>
-                    {cell.runnable ? (
+                  <td
+                    key={cell.database}
+                    data-runnable={cell.runnable}
+                    data-installed={cell.installed}
+                    data-selected={cell.selected}
+                  >
+                    {cell.runnable && !cell.installed ? (
+                      <span className="experiment-grid-na">{t('grid.notInstalled')}</span>
+                    ) : cell.runnable ? (
                       <label>
                         <input
                           type="checkbox"

@@ -1179,6 +1179,11 @@ body.agent-shell-resizing .agent-shell-divider-ghost {
   grid-template-columns: 64px 10px minmax(0, 1fr);
 }
 
+/* Showcase deployment: no Agent, so the workspace takes the whole width. */
+.agent-off .agent-shell-panes {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .dashboard-collapsed .agent-dashboard-pane {
   display: none;
 }
@@ -1274,6 +1279,10 @@ body.agent-shell-resizing .agent-shell-divider-ghost {
   .agent-collapsed .agent-shell-panes {
     display: block;
     padding: 48px 8px 8px;
+  }
+
+  .agent-off .agent-shell-panes {
+    padding-top: 8px;
   }
 
   .agent-dashboard-pane,

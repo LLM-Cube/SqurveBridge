@@ -120,9 +120,14 @@ export function DiffPanel({ api, matrix, onReplay, t }) {
   }, [api, aId, bId, category])
 
   if (!datasets.length) return null
-  const methodOf = runId => runs.find(run => run.runId === runId)?.method || runId
-  const aMethod = methodOf(aId)
-  const bMethod = methodOf(bId)
+  const labelFor = runId => runs.find(run => run.runId === runId)?.label || runId
+  const aMethod = labelFor(aId)
+  const bMethod = labelFor(bId)
+  // Replay runs each side's own method, with its stage swaps when it is a variant.
+  const replayTargets = diff ? [
+    { label: aMethod, method: diff.a?.method, stages: diff.a?.stages || {} },
+    { label: bMethod, method: diff.b?.method, stages: diff.b?.stages || {} },
+  ] : []
   const mark = value => (value === true ? '✓' : value === false ? '✗' : '?')
 
   return (
@@ -141,13 +146,13 @@ export function DiffPanel({ api, matrix, onReplay, t }) {
         <label>
           <span>A</span>
           <select aria-label={t('results.diffMethodA')} value={aId} onChange={event => setAId(event.target.value)}>
-            {runs.map(run => <option key={run.runId} value={run.runId}>{run.method}</option>)}
+            {runs.map(run => <option key={run.runId} value={run.runId}>{run.label}</option>)}
           </select>
         </label>
         <label>
           <span>B</span>
           <select aria-label={t('results.diffMethodB')} value={bId} onChange={event => setBId(event.target.value)}>
-            {runs.map(run => <option key={run.runId} value={run.runId}>{run.method}</option>)}
+            {runs.map(run => <option key={run.runId} value={run.runId}>{run.label}</option>)}
           </select>
         </label>
       </div>
@@ -193,13 +198,20 @@ export function DiffPanel({ api, matrix, onReplay, t }) {
                       <td>
                         {row.db_id && row.question && (
                           <span className="results-diff-replay">
-                            {[aMethod, bMethod].map(method => (
+                            {replayTargets.filter(target => target.method).map(target => (
                               <button
-                                key={method}
+                                key={target.label}
                                 type="button"
-                                onClick={() => onReplay?.({ method, dataset, db_id: row.db_id, question: row.question })}
+                                onClick={() => onReplay?.({
+                                  method: target.method,
+                                  stages: target.stages,
+                                  label: target.label,
+                                  dataset,
+                                  db_id: row.db_id,
+                                  question: row.question,
+                                })}
                               >
-                                {t('results.diffReplayWith', { method })}
+                                {t('results.diffReplayWith', { method: target.label })}
                               </button>
                             ))}
                           </span>

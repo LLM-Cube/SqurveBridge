@@ -210,6 +210,38 @@ test('launches one experiment for multiple Compose connections across benchmarks
   assert.deepEqual(experiments, ['exp-1'])
 })
 
+test('a variant runs as its own experiment cell next to the method', async () => {
+  const calls = []
+  const swap = { generate: 'C3SQLGenerator' }
+  renderRun({
+    variants: [{ method: 'dinsql', dataset: 'spider', stages: swap }],
+    postJson: async (path, body) => {
+      calls.push([path, body])
+      return {
+        experiment_id: 'exp-2',
+        status: 'running',
+        sampling: body.sampling,
+        cells: [
+          { cell_id: 'c1', method: 'dinsql', dataset: 'spider', label: 'dinsql', job_id: 'job-1', status: 'running', progress: {} },
+          {
+            cell_id: 'c2', method: 'dinsql', dataset: 'spider', label: 'dinsql · generate→C3SQLGenerator',
+            stages: swap, job_id: 'job-2', status: 'running', progress: {},
+          },
+        ],
+      }
+    },
+  })
+  assert.match(screen.getByTestId('run-variants').textContent, /dinsql · generate→C3SQLGenerator \/ spider/)
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Run config' }))
+
+  assert.equal(calls[0][0], '/api/experiments', 'one connection plus a variant is an experiment')
+  assert.deepEqual(calls[0][1].cells, [
+    { method: 'dinsql', dataset: 'spider' },
+    { method: 'dinsql', dataset: 'spider', stages: swap },
+  ])
+  assert.match(screen.getByTestId('run-batch-monitor').textContent, /dinsql · generate→C3SQLGenerator \/ spider/)
+})
+
 test('jobsFromExperiment keeps live job detail and lists queued cells in order', () => {
   const experiment = {
     cells: [
