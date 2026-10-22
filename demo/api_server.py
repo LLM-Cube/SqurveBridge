@@ -31,7 +31,8 @@ if str(_project_root) not in sys.path:
 
 from demo import model_catalog
 from demo.experiments import MAX_CELLS, ExperimentConflict, ExperimentNotFound, ExperimentScheduler
-from demo.deployment import deployment_features, deployment_target, hosted_route_allowed
+from demo.variants import VariantError, normalize_stages, runner_overrides, swappable_actors, variant_key, variant_label
+from demo.deployment import deployment_features, deployment_target, route_denial
 from demo.file_to_db import process_uploaded_files, sqlite_to_schema
 from demo.query_runtime import (
     ACTOR_BY_TYPE,
@@ -51,6 +52,7 @@ from demo.workspace import (
     run_dir as workspace_run_dir,
     workspace_root,
 )
+from reproduce.lib.stage_overrides import STAGE_ACTORS_ENV
 from reproduce.lib.env_config import (
     PROVIDER_ENV_VARS,
     api_key_ready,
@@ -72,20 +74,22 @@ sock = Sock(app)
 _pi_sessions = register_pi_routes(app, sock, _project_root)
 
 
+_ROUTE_DENIAL_MESSAGES = {
+    "local_only": "This operation is available only in the trusted local Demo App.",
+    "agent_disabled": "The Agent is turned off in this Demo.",
+}
+
+
 @app.before_request
 def enforce_deployment_policy():
     if not app.testing and deployment_target() != "hf-space":
         _restore_evaluation_jobs_once()
-    if (
-        request.url_rule is not None
-        and request.path.startswith("/api/")
-        and not hosted_route_allowed(request.method, request.path)
-    ):
-        return jsonify({
-            "message": "This operation is available only in the trusted local Demo App.",
-            "reason": "local_only",
-        }), 403
-    return None
+    if request.url_rule is None or not request.path.startswith("/api/"):
+        return None
+    reason = route_denial(request.method, request.path)
+    if reason is None:
+        return None
+    return jsonify({"message": _ROUTE_DENIAL_MESSAGES[reason], "reason": reason}), 403
 
 
 @app.errorhandler(404)
@@ -525,6 +529,7 @@ def _config_catalog() -> list[dict]:
         data_source = str(config.get("dataset", {}).get("data_source", ""))
         source_parts = data_source.split(":")
         split = source_parts[1] if len(source_parts) == 3 else config.get("split", "unknown")
+        benchmark_id = source_parts[0] if len(source_parts) == 3 else path.parent.name
         configs.append({
             "dataset": path.parent.name,
             "method": method,
@@ -536,8 +541,23 @@ def _config_catalog() -> list[dict]:
             "model": llm.get("model_name"),
             "stages": stages,
             "exec_process": config.get("engine", {}).get("exec_process", []),
+            "installed": _benchmark_split_path(benchmark_id, split) is not None,
         })
     return configs
+
+
+def _benchmark_split_path(benchmark_id: str, split: str) -> Path | None:
+    """The installed dataset file of a benchmark split, or None when it is not installed."""
+    config_dir = _project_root / "config"
+    try:
+        records = json.loads((config_dir / "sys_config.json").read_text(encoding="utf-8")).get("benchmark", [])
+    except (OSError, ValueError, TypeError):
+        return None
+    record = next((item for item in records if item.get("id") == benchmark_id), None)
+    if not record or not record.get("root_path") or not _IDENTIFIER.fullmatch(split or ""):
+        return None
+    path = (config_dir / record["root_path"] / split / "dataset.json").resolve()
+    return path if path.is_file() else None
 
 
 def _benchmark_catalog() -> list[dict]:
@@ -891,7 +911,9 @@ def capabilities():
         "workflows": WORKFLOW_SKELETONS,
         "llm_providers": _llm_provider_catalog(),
         "benchmarks": _benchmark_catalog(),
-        "reproduce_configs": _config_catalog(),
+        "reproduce_configs": (configs := _config_catalog()),
+        # Actors a stage may be swapped to in an experiment variant, by task type.
+        "stage_actors": swappable_actors(configs),
         "deployment": {
             "target": deployment_target(),
             "features": deployment_features(),
@@ -965,15 +987,25 @@ def query():
     actors = payload.get("actors") or []
     generator = payload.get("generator") or "DINSQLGenerator"
     method = str(payload.get("method") or "").strip()
+    swaps: dict[str, str] = {}
     if method:
         # Replay one question the way a reproduce run does: the method's workflow
         # for the benchmark this database belongs to.
         benchmark = str(database.get("benchmark") or "")
+        configs = _config_catalog()
         config = next(
-            (item for item in _config_catalog() if item["method"] == method and item["dataset"] == benchmark),
+            (item for item in configs if item["method"] == method and item["dataset"] == benchmark),
             None,
         )
-        workflow = [stage["actor"] for stage in (config or {}).get("stages") or [] if stage.get("actor")]
+        # A variant replays with its swapped Actors, never its method's own.
+        try:
+            swaps = normalize_stages(config or {}, payload.get("stages"), swappable_actors(configs))
+        except VariantError as exc:
+            return _json_error(f"Stage swaps are not allowed: {exc}.")
+        workflow = [
+            swaps.get(stage.get("id"), stage["actor"])
+            for stage in (config or {}).get("stages") or [] if stage.get("actor")
+        ]
         if not workflow:
             return _json_error(f"No reproduce workflow for {method} on {benchmark or 'this database'}.")
         mode, actors = "workflow", workflow
@@ -1015,6 +1047,8 @@ def query():
     )
     if method:
         result["method"] = method
+        if swaps:
+            result["stages"] = swaps
     if result.get("status") == "success":
         result["trace"] = _serialize_public_query_trace(result.get("trace"))
         if not hosted:
@@ -1836,6 +1870,9 @@ def _job_environment(job: dict) -> dict[str, str]:
     child_env["SQURVE_EVAL_SAMPLE_MODE"] = job["sample_mode"]
     child_env["SQURVE_EVAL_SAMPLE_SEED"] = str(job["sample_seed"])
     child_env["SQURVE_EVAL_SCOPE"] = "smoke"
+    child_env.pop(STAGE_ACTORS_ENV, None)
+    if job.get("stage_overrides"):
+        child_env[STAGE_ACTORS_ENV] = json.dumps(job["stage_overrides"])
     return child_env
 
 
@@ -2086,10 +2123,13 @@ def _launch_evaluation(
         sample_limit: int = 100,
         sample_mode: str = "slice",
         sample_seed: int = 42,
+        stages: dict[str, str] | None = None,
 ) -> dict:
-    config = next((item for item in _config_catalog() if item["dataset"] == dataset and item["method"] == method), None)
+    configs = _config_catalog()
+    config = next((item for item in configs if item["dataset"] == dataset and item["method"] == method), None)
     if not config:
         raise ValueError(f"Unknown reproduce configuration: {method} / {dataset}")
+    stages = dict(stages or {})
 
     job_id = uuid.uuid4().hex[:10]
     job_dir = _run_dir / job_id
@@ -2103,6 +2143,8 @@ def _launch_evaluation(
         "sample_limit": sample_limit,
         "sample_mode": sample_mode,
         "sample_seed": sample_seed,
+        "stages": stages,
+        "stage_overrides": runner_overrides(_project_root, configs, config, stages) if stages else {},
         "status": "starting",
         "pid": None,
         "log_path": _display_path(job_dir / "run.log"),
@@ -2348,9 +2390,10 @@ def resume_evaluation(job_id: str):
 class _EvaluationJobBackend:
     """Runs experiment cells as ordinary Demo evaluation jobs."""
 
-    def launch(self, method: str, dataset: str, sampling: dict, experiment_id: str) -> str:
+    def launch(self, method: str, dataset: str, sampling: dict, experiment_id: str, stages: dict[str, str]) -> str:
         job = _launch_evaluation(
             dataset, method, f"exp-{experiment_id}", sampling["limit"], sampling["mode"], sampling["seed"],
+            stages=stages,
         )
         return job["job_id"]
 
@@ -2444,22 +2487,38 @@ def create_experiment():
     raw_cells = payload.get("cells")
     if not isinstance(raw_cells, list) or not raw_cells:
         return _json_error("Select at least one method × benchmark cell.")
-    cells: list[tuple[str, str]] = []
+    configs = _config_catalog()
+    actors_by_type = swappable_actors(configs)
+    cells: list[tuple[str, str, dict[str, str]]] = []
+    invalid = []
     for item in raw_cells:
         if not isinstance(item, dict):
             return _json_error("Each cell needs a method and a dataset.")
-        key = (str(item.get("method") or "").strip(), str(item.get("dataset") or "").strip())
-        if key not in cells:
-            cells.append(key)
+        method, dataset = str(item.get("method") or "").strip(), str(item.get("dataset") or "").strip()
+        config = next((entry for entry in configs if (entry["method"], entry["dataset"]) == (method, dataset)), None)
+        try:
+            stages = normalize_stages(config or {}, item.get("stages"), actors_by_type)
+        except VariantError as exc:
+            invalid.append({"method": method, "dataset": dataset, "stages": exc.problems})
+            continue
+        if not any((method, dataset, stages) == existing for existing in cells):
+            cells.append((method, dataset, stages))
+    if invalid:
+        summary = ", ".join(
+            f"{item['method']}/{item['dataset']} {problem['stage']} ({problem['reason']})"
+            for item in invalid for problem in item["stages"]
+        )
+        return jsonify({"status": "error", "code": "invalid_stages",
+                        "message": f"Some stage swaps are not allowed: {summary}.", "cells": invalid}), 400
     if len(cells) > MAX_CELLS:
         return _json_error(f"An experiment can hold at most {MAX_CELLS} cells.")
     sampling = _experiment_sampling(payload)
     if sampling is None:
         return _json_error("Sampling needs limit 3, 10, 20, 50, 100, or 200, mode slice or random, and an integer seed.")
-    catalog = {(item["dataset"], item["method"]) for item in _config_catalog()}
+    catalog = {(item["dataset"], item["method"]) for item in configs}
     rejected = [
         {"method": method, "dataset": dataset, "error_code": code}
-        for method, dataset in cells
+        for method, dataset in dict.fromkeys((method, dataset) for method, dataset, _stages in cells)
         if (code := _cell_preflight(method, dataset, catalog))
     ]
     if rejected:
@@ -2656,6 +2715,17 @@ def _sampling_matches(scores: dict, job: dict | None, split: str, sampling: dict
     return mode != "random" or meta.get("seed") == sampling["seed"]
 
 
+def _scores_stages(scores: dict) -> dict[str, str]:
+    stages = scores.get("stage_overrides")
+    if not isinstance(stages, dict):
+        return {}
+    return {str(stage): str(actor) for stage, actor in sorted(stages.items())}
+
+
+def _scores_variant(scores: dict) -> str:
+    return variant_key(str(scores.get("method")), _scores_stages(scores))
+
+
 def _archived_scores(split: str, sampling: dict) -> dict[tuple[str, str], tuple[dict, str]]:
     """Latest archived run per (method, dataset) with the requested sampling, and where it came from."""
     latest: dict[tuple[str, str], tuple[dict, str]] = {}
@@ -2666,7 +2736,8 @@ def _archived_scores(split: str, sampling: dict) -> dict[tuple[str, str], tuple[
         job = _read_scores(run_dir.parent / "job.json") if source == "demo-runs" else None
         if not _sampling_matches(scores, job, split, sampling):
             continue
-        key = (str(scores.get("method")), str(scores.get("dataset")))
+        # A variant run never stands in for its method's own configuration.
+        key = (_scores_variant(scores), str(scores.get("dataset")))
         previous = latest.get(key)
         if previous is None or str(scores.get("timestamp") or "") > str(previous[0].get("timestamp") or ""):
             # Demo runs live in this workspace's session store; everything else is archived evidence.
@@ -2725,6 +2796,7 @@ def _results_matrix(args) -> tuple[dict | None, tuple | None]:
         sampling = {"limit": limit, "mode": mode, "seed": seed}
 
     cells = []
+    labels = {}
     archived = {} if experiment_id else _archived_scores(split, sampling)
     for method in methods:
         for dataset in datasets:
@@ -2734,6 +2806,7 @@ def _results_matrix(args) -> tuple[dict | None, tuple | None]:
                     cells.append(_matrix_cell(method, dataset, None, None, "missing"))
                     continue
                 cell, scores = found
+                labels[method] = variant_label(cell.method, cell.stages)
                 if scores:
                     cells.append(_matrix_cell(method, dataset, scores, "session", "ok"))
                 else:
@@ -2742,6 +2815,8 @@ def _results_matrix(args) -> tuple[dict | None, tuple | None]:
                     cells.append(_matrix_cell(method, dataset, None, "session", status))
             else:
                 scores, source = archived.get((method, dataset), (None, None))
+                if scores:
+                    labels[method] = variant_label(str(scores.get("method")), _scores_stages(scores))
                 cells.append(_matrix_cell(method, dataset, scores, source, "ok" if scores else "missing"))
 
     alignment = _mark_alignment(cells, datasets)
@@ -2756,6 +2831,8 @@ def _results_matrix(args) -> tuple[dict | None, tuple | None]:
         "split": split,
         "sampling": sampling,
         "methods": methods,
+        # Display names for variant columns; a plain method is its own label.
+        "labels": {method: labels.get(method, method) for method in methods},
         "datasets": datasets,
         "metrics": [
             {"id": key, "label": _METRIC_LABELS.get(key, key.upper()), "higher_is_better": True}
@@ -2832,15 +2909,9 @@ _benchmark_question_cache: dict[tuple[str, float], dict[str, dict]] = {}
 
 def _benchmark_questions(dataset: str, split: str) -> dict[str, dict]:
     """instance_id → {db_id, question} from an installed benchmark split, or {} when absent."""
-    config_dir = _project_root / "config"
-    try:
-        records = json.loads((config_dir / "sys_config.json").read_text(encoding="utf-8")).get("benchmark", [])
-    except (OSError, ValueError, TypeError):
+    path = _benchmark_split_path(dataset, split)
+    if path is None:
         return {}
-    record = next((item for item in records if item.get("id") == dataset), None)
-    if not record or not record.get("root_path") or not _IDENTIFIER.fullmatch(split):
-        return {}
-    path = (config_dir / record["root_path"] / split / "dataset.json").resolve()
     try:
         mtime = path.stat().st_mtime
     except OSError:
@@ -2917,6 +2988,11 @@ def results_diff():
         return {
             "run_id": _public_identifier(scores.get("run_id")),
             "method": _public_identifier(scores.get("method")),
+            "variant": _public_identifier(_scores_variant(scores)),
+            "label": _public_text(variant_label(str(scores.get("method")), _scores_stages(scores))),
+            "stages": {
+                _public_identifier(stage): _public_identifier(actor) for stage, actor in _scores_stages(scores).items()
+            },
             "dataset": _public_identifier(scores.get("dataset")),
         }
 
@@ -3051,6 +3127,9 @@ def _archive_entry(source: str, run_dir: Path) -> dict | None:
         "source": source,
         "dataset": scores.get("dataset"),
         "method": scores.get("method"),
+        "variant": _scores_variant(scores),
+        "label": variant_label(str(scores.get("method")), _scores_stages(scores)),
+        "stages": _scores_stages(scores),
         "split": scores.get("split"),
         "scope": scores.get("scope"),
         "sample_count": scores.get("sample_count"),

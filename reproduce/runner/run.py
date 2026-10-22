@@ -42,6 +42,7 @@ from reproduce.lib.checkpoints import (
     resolve_checkpoint_state_path,
     select_resume_checkpoint,
 )
+from reproduce.lib.stage_overrides import apply_stage_overrides, stage_overrides_from_env
 from reproduce.lib.paths import REPRODUCE_ROOT, config_filename, config_repo_path, run_identifier
 from reproduce.metrics.persistence import persist_scores_bundle
 from demo.workspace import (
@@ -61,7 +62,8 @@ def main(dataset_name, method, resume=False, resume_from=None):
     original_cwd = os.getcwd()
     os.chdir(REPRODUCE_ROOT)
     try:
-        config_dict = prepare_runtime_llm_config(load_dataset(config_path))
+        stage_overrides = stage_overrides_from_env()
+        config_dict = apply_stage_overrides(prepare_runtime_llm_config(load_dataset(config_path)), stage_overrides)
         ready, ready_message = api_key_ready(config_dict)
         if not ready:
             raise SystemExit(f"LLM provider is not ready for evaluation: {ready_message}")
@@ -595,6 +597,9 @@ def _persist_scores(
     )
     if stage_results:
         scores["stage_metrics"] = stage_results
+    stage_overrides = stage_overrides_from_env()
+    if stage_overrides:
+        scores["stage_overrides"] = {stage: item["actor"] for stage, item in stage_overrides.items()}
     persisted = persist_scores_bundle(
         output_dir=output_dir,
         scores=scores,

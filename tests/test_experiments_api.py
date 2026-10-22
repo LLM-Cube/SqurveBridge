@@ -18,11 +18,12 @@ class FakeBackend:
     def __init__(self):
         self.jobs = {}
         self.launched = []
+        self.launched_stages = []
         self.cancelled = []
         self.resumed = []
         self.fail_launch = set()
 
-    def launch(self, method, dataset, sampling, experiment_id):
+    def launch(self, method, dataset, sampling, experiment_id, stages):
         if (method, dataset) in self.fail_launch:
             raise RuntimeError("could not start")
         job_id = f"job{len(self.jobs) + 1}"
@@ -35,6 +36,7 @@ class FakeBackend:
             "progress": {"completed": 0, "total": sampling["limit"], "current_stage": "reduce"},
         }
         self.launched.append((method, dataset, dict(sampling), experiment_id))
+        self.launched_stages.append(dict(stages))
         return job_id
 
     def job(self, job_id):
