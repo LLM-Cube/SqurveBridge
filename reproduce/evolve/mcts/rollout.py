@@ -8,6 +8,7 @@ import shutil
 import shlex
 import subprocess
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,10 @@ def apply_action(repo_root: str | Path, action: Action, *, allow_scope_c: bool =
 
 
 def score_from_scores(scores: dict, metric_path: str) -> float | None:
+    if scores.get("schema_version") == 2:
+        metric_path = {"ex": "ex_at_1", "em": "structural_match"}.get(metric_path, metric_path)
+        item = scores.get("aggregate", {}).get(metric_path)
+        return item.get("value") if isinstance(item, dict) and item.get("status") == "available" else None
     if metric_path in {"ex", "em", "sf1", "sc", "ves"}:
         metric_path = f"{metric_path}.avg"
     current: Any = scores
@@ -123,9 +128,18 @@ def run_action_rollout(
         env: dict[str, str] | None = None,
         copy_scores_to: str | Path | None = None,
         allow_scope_c: bool = False,
+        retain_directory: str | Path | None = None,
+        collection: dict | None = None,
 ) -> dict:
     worktree = create_worktree(repo_root, base_ref=base_ref)
+    retained = Path(retain_directory) if retain_directory else None
+    if retained:
+        retained.mkdir(parents=True, exist_ok=True)
+    trace_dir = worktree / ".squrve-evo-evidence"
+    context = {}
     try:
+        context = {"base_commit": run_command(["git", "rev-parse", "HEAD"], cwd=worktree).stdout.strip(),
+                   "base_tree": run_command(["git", "rev-parse", "HEAD^{tree}"], cwd=worktree).stdout.strip()}
         try:
             apply_result = apply_action(worktree, action, allow_scope_c=allow_scope_c)
         except ValueError as exc:
@@ -138,16 +152,39 @@ def run_action_rollout(
                 "apply": {"action_id": action.action_id, "applied": 0, "files": []},
             }
         inline_env, command = split_env_prefix(smoke_command)
-        run_result = run_command(command, cwd=worktree, env={**inline_env, **(env or {})})
+        applied_diff = run_command(["git", "diff", "--binary", "HEAD"], cwd=worktree).stdout
+        runtime_env = {**inline_env, **(env or {})}
+        if retained:
+            runtime_env.update({"SQURVE_EVO_EVIDENCE_DIR": str(trace_dir), "SQURVE_EVO_RUN_ID": "evo-" + uuid.uuid4().hex,
+                                "SQURVE_EVO_COLLECTION": json.dumps(collection or {})})
+            (retained / "actual.patch").write_text(applied_diff, encoding="utf-8")
+        context.update({"command": command, "environment_keys": sorted(runtime_env), "collection": collection or {}})
+        run_result = run_command(command, cwd=worktree, env=runtime_env)
+        context["returncode"] = run_result.returncode
         if run_result.returncode != 0:
             return {
                 "action_id": action.action_id,
                 "score": None,
-                "verdict": {"verdict": "STOP", "reason": run_result.stderr or run_result.stdout},
+                "verdict": {"verdict": "STOP", "reason": "execution_failed" if retained else run_result.stderr or run_result.stdout},
                 "apply": apply_result,
             }
         source_scores_path = worktree / scores_path
         scores = load_scores(source_scores_path)
+        if retained:
+            from reproduce.lib.env_config import redact_config_secrets
+            from reproduce.evolve.verification import write_json, digest
+            selected_trace = trace_dir / str(scores.get("run_id"))
+            if not selected_trace.is_dir():
+                selected_trace = trace_dir
+            config_source = selected_trace / "config.redacted.json"
+            if config_source.is_file():
+                shutil.copyfile(config_source, retained / "config.redacted.json")
+                context["config_sha256"] = digest(retained / "config.redacted.json")
+            context["patch_sha256"] = digest(retained / "actual.patch")
+            shutil.copyfile(source_scores_path, retained / "original.scores.json")
+            evaluation_path = selected_trace / "evaluation" / "scores.json"
+            if evaluation_path.is_file():
+                scores = load_scores(evaluation_path)
         if copy_scores_to:
             target = Path(copy_scores_to)
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -157,8 +194,16 @@ def run_action_rollout(
             "action_id": action.action_id,
             "score": score,
             "scores": scores,
+            "execution": context,
+            "actual_diff": applied_diff,
+            "runtime_evidence": "runtime/" + str(selected_trace.relative_to(trace_dir)) if retained and selected_trace != trace_dir else "runtime",
             "verdict": rollout_verdict(baseline=baseline_score, current=score),
             "apply": apply_result,
         }
     finally:
+        if retained:
+            from reproduce.evolve.verification import write_json
+            write_json(retained / "execution.json", context)
+            if trace_dir.is_dir():
+                shutil.copytree(trace_dir, retained / "runtime", dirs_exist_ok=True)
         remove_worktree(repo_root, worktree)

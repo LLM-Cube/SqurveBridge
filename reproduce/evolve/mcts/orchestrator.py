@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import uuid
 from pathlib import Path
 from typing import Any, Callable, List
 
@@ -158,6 +159,8 @@ def run_search(
     raw_scores: dict[str, float | None] = {}
     verified_action_ids: set[str] = set()
     journal = EvolutionJournal.read(journal_path) if journal_path else None
+    namespace = f"search-{uuid.uuid4().hex[:12]}-" if getattr(simulator, "strict_evidence", False) else ""
+    branch_offset = max((node.branch_id for node in journal.nodes), default=0) if namespace and journal else 0
     evaluations = 0
     exhausted = False
 
@@ -194,9 +197,9 @@ def run_search(
                     verified_action_ids=verified_action_ids if cumulative_updates else None,
                 )
                 if action is not None:
-                    branch_id = len(nodes_by_id) if candidate.node_id == "root" else candidate.branch_id
+                    branch_id = branch_offset + len(nodes_by_id) if candidate.node_id == "root" else candidate.branch_id
                     candidate = add_child(
-                        candidate, f"node-{len(nodes_by_id)}", action.to_dict(), branch_id=branch_id,
+                        candidate, f"{namespace}node-{len(nodes_by_id)}", action.to_dict(), branch_id=branch_id,
                     )
                     nodes_by_id[candidate.node_id] = candidate
                     expanded = True
@@ -221,6 +224,15 @@ def run_search(
         rollout = rollout_memo.get(memo_key)
         fresh = rollout is None
         if fresh:
+            if evolve_dir:
+                append_process_event(evolve_dir, {
+                    "type": "search.selection", "search_id": namespace or "legacy", "iteration": iteration, "selected": leaf.node_id,
+                    "action": rollout_action.action_id, "rule": "uct-progressive-width-v1",
+                    "exploration": exploration, "alternatives": root.to_dict(),
+                    "candidate_action_ids": [item.action_id for item in actions],
+                    "max_chain_depth": max_chain_depth, "cumulative_updates": cumulative_updates,
+                    "randomness": "deterministic-selection",
+                })
             rollout = _normalize_rollout_result(
                 simulator(rollout_action, iteration),
                 baseline_score=baseline_score,
@@ -243,7 +255,7 @@ def run_search(
         if fresh:
             evaluations += 1
             record_action_result(action_stats, str(leaf.action.get("action_id")), reward)
-        if leaf.depth == 1 and (rollout.get("verdict") or {}).get("verdict") == "CONTINUE":
+        if leaf.depth == 1 and ((rollout.get("verification") or {}).get("accepted") if "verification" in rollout else (rollout.get("verdict") or {}).get("verdict") == "CONTINUE"):
             verified_action_ids.add(str(leaf.action.get("action_id")))
         if should_force_backprop(iteration, rollouts, leaf, recent_best):
             leaf.forced_backprop = True
@@ -259,10 +271,14 @@ def run_search(
                 fitness_abs=_absolute_fitness(rollout, baseline_scores),
                 evaluated_action=rollout_action.to_dict(),
             )
+            stage_nodes = [node for node in journal.nodes if node.stage == stage] if namespace else journal.nodes
             if stage == "smoke":
-                smoke_gate_promote(journal.nodes, promote_top_k=smoke_promote_top_k)
+                smoke_gate_promote(stage_nodes, promote_top_k=smoke_promote_top_k)
             elif stage == "bounded":
-                bounded_eval_promote(journal.nodes, promote_top_k=bounded_promote_top_k)
+                bounded_eval_promote(stage_nodes, promote_top_k=bounded_promote_top_k)
+            if namespace:
+                eligible = [node for node in stage_nodes if node.status == "pass" and node.metadata.get("verification", {}).get("accepted") and (node.promoted or stage == "full")]
+                journal.best_node = max(eligible, key=lambda node: node.fitness).node_id if eligible else None
             _rewrite_node_artifacts(journal=journal, evolve_dir=evolve_dir)
             # Stagnation is judged per fresh evaluation, never on memo hits,
             # so dry_rounds counts informative rollouts rather than loop turns.
@@ -348,7 +364,7 @@ def run_bounded_funnel(
         _write_tree_artifact(evolve_dir, "smoke", smoke_result)
         if journal_path:
             journal = EvolutionJournal.read(journal_path)
-            if [node for node in journal.nodes if node.promoted and node.status == "pass"]:
+            if [node for node in journal.nodes if node.promoted and node.status == "pass" and (not getattr(smoke_simulator, "strict_evidence", False) or node.stage == "smoke")]:
                 _transition_if_possible(
                     evolve_dir,
                     EvolvePhase.SMOKE_PROMOTED,
@@ -371,7 +387,7 @@ def run_bounded_funnel(
         return {"smoke": smoke_result, "bounded": None, "full": None, "skipped_no_patch": skipped_no_patch}
 
     journal = EvolutionJournal.read(journal_path)
-    smoke_promoted = [node.node_id for node in journal.nodes if node.promoted and node.status == "pass"]
+    smoke_promoted = [node.node_id for node in journal.nodes if node.promoted and node.status == "pass" and (not getattr(smoke_simulator, "strict_evidence", False) or node.stage == "smoke")]
     bounded_actions = [
         Action.from_dict((journal.get_node(node_id).metadata or {}).get("action") or {})
         for node_id in smoke_promoted[:smoke_promote_top_k]
@@ -433,6 +449,9 @@ def run_bounded_funnel(
             )
             full_result = full_simulator(Action.from_dict((best.metadata or {}).get("action") or {}), 0)
             _write_full_artifacts(evolve_dir, best.node_id, full_result)
+            if isinstance(full_result, dict) and "verification" in full_result and not full_result["verification"].get("accepted"):
+                _transition_if_possible(evolve_dir, EvolvePhase.FAILED, reason="full_evidence_or_evaluation_rejected", active_stage=None)
+                return {"smoke": smoke_result, "bounded": bounded_result, "full": full_result, "skipped_no_patch": skipped_no_patch}
             _transition_if_possible(
                 evolve_dir,
                 EvolvePhase.REVIEW_PENDING,
@@ -546,12 +565,18 @@ def _rollout_reward(
     so an action is credited in proportion to how much it actually moved the
     metric it declared to fix.
     """
+    if "verification" in rollout:
+        verified = rollout["verification"]
+        measurement = verified.get("measurement") or {}
+        return measurement["fitness"] if verified.get("verifiable") and measurement.get("computable") else R_INVALID
     verdict = rollout.get("verdict") or {}
     if rollout.get("score") is None or verdict.get("verdict") == "STOP":
         return R_INVALID
     scores = rollout.get("scores")
     if isinstance(scores, dict) and isinstance(baseline_scores, dict):
         delta = compare_scores(baseline_scores, scores)
+        if delta.get("status", "compatible") != "compatible":
+            return R_INVALID
         reward = improvement_from_scores(scores, baseline_scores, delta=delta, weights=weights)
         reward += _target_metric_bonus(action, baseline_scores, scores, target_bonus_weight)
         return round(reward, 6)
@@ -578,6 +603,8 @@ def _target_metric_bonus(
 
 def _absolute_fitness(rollout: dict[str, Any], baseline_scores: dict[str, Any] | None) -> float | None:
     """Absolute fitness for reporting alongside the baseline-centered reward."""
+    if "verification" in rollout:
+        return None  # Strict reporting exposes measured, baseline-centered contributions instead.
     scores = rollout.get("scores")
     if isinstance(scores, dict):
         delta = compare_scores(baseline_scores, scores) if isinstance(baseline_scores, dict) else None
@@ -618,11 +645,18 @@ def _record_rollout_node(
     verdict = rollout.get("verdict") or rollout_verdict(baseline=baseline_score, current=score)
     verdict_name = verdict.get("verdict")
     status = "buggy" if verdict_name in {"STOP", "REGRESSION"} else "pass"
+    verification = rollout.get("verification")
+    if verification is not None:
+        status = "pass" if verification.get("accepted") else "buggy"
+    if verification is not None:
+        measurement = verification.get("measurement") or {}
+        fitness = measurement.get("fitness") if verification.get("verifiable") and measurement.get("computable") else None
+        verdict = {"verdict": "CONTINUE" if verification.get("accepted") else "STOP", "rule": "evo-acceptance-v1", "fitness": fitness, "issues": verification.get("issues", [])}
     score_metadata = _scores_metadata(stage, rollout)
     if tree_node.node_id in existing_ids:
         existing = journal.get_node(tree_node.node_id)
         merged_scores = {**existing.scores, **score_metadata}
-        merged_metadata = {**existing.metadata, "action": action, "fitness_abs": fitness_abs}
+        merged_metadata = {**existing.metadata, "action": action, "fitness_abs": fitness_abs, **({"verification": verification, "verification_ref": rollout.get("verification_ref"), "scheduling_control": R_INVALID if fitness is None else None} if verification is not None else {})}
         journal.update_node(
             tree_node.node_id,
             status=status,
@@ -646,7 +680,7 @@ def _record_rollout_node(
             decision="candidate",
             scores=score_metadata,
             delta=verdict,
-            metadata={"action": action, "fitness_abs": fitness_abs},
+            metadata={"action": action, "fitness_abs": fitness_abs, **({"verification": verification, "verification_ref": rollout.get("verification_ref"), "scheduling_control": R_INVALID if fitness is None else None} if verification is not None else {})},
         )
         journal.add_node(node)
     if evolve_dir:
@@ -702,8 +736,10 @@ def _write_action_artifacts(node_dir: Path, action: dict[str, Any], rollout: dic
     if not plan_path.exists():
         plan_path.write_text(f"# Change Plan\n\n{action.get('description', '')}\n", encoding="utf-8")
     patch_path = node_dir / "patch.diff"
-    if not patch_path.exists():
-        patch_path.write_text(json.dumps(action.get("patches") or [], ensure_ascii=False, indent=2), encoding="utf-8")
+    if rollout.get("actual_diff") is not None:
+        patch_path.write_text(rollout["actual_diff"], encoding="utf-8")
+    elif not patch_path.exists():
+        patch_path.write_text("# Planned changes only; actual patch unavailable\n" + json.dumps(action.get("patches") or [], ensure_ascii=False, indent=2), encoding="utf-8")
     command = action.get("run_command") or rollout.get("run_command") or ""
     command_path = node_dir / "run-command.sh"
     if not command_path.exists():
@@ -911,6 +947,26 @@ def main(argv=None) -> int:
             promotion.setdefault("smoke_top_k", policy["promote_top_k"])
         elif args.stage == "bounded":
             promotion.setdefault("bounded_top_k", policy["promote_top_k"])
+
+    if args.repo_root and args.smoke_command and args.scores_path:
+        from reproduce.evolve.verified_search import VerifiedSimulator, run_verified_search
+        if not args.evolve_dir or not args.journal or not policy.get("acceptance"):
+            parser.error("Real Evo requires --evolve-dir, --journal and a versioned acceptance policy; historical summaries cannot enable strict promotion.")
+        acceptance = {**policy["acceptance"], "stage": args.stage, "budget": {"rollouts": args.rollouts}}
+        verified = VerifiedSimulator(repo_root=args.repo_root,
+                                     directory=Path(args.evolve_dir) / "verification" / args.stage,
+                                     policy=acceptance, command=args.smoke_command,
+                                     scores_path=args.scores_path, reviews=policy.get("reviews") or {},
+                                     base_ref=args.base_ref, env=policy_env)
+        result = run_verified_search(actions=actions, simulator=verified, journal_path=args.journal,
+                                     evolve_dir=args.evolve_dir, rollouts=args.rollouts,
+                                     cumulative_updates=cumulative_updates, max_chain_depth=max_chain_depth)
+        payload = json.dumps(result, ensure_ascii=False, indent=2)
+        if args.output:
+            Path(args.output).write_text(payload, encoding="utf-8")
+        else:
+            print(payload)
+        return 0
 
     def simulator(action: Action, _iteration: int) -> float | dict[str, Any]:
         if args.repo_root and args.smoke_command and args.scores_path:
