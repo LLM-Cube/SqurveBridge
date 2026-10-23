@@ -66,7 +66,7 @@ def freeze_policy(root: Path, policy: dict) -> dict:
 def metric_key(scores: dict, metric: str) -> str:
     if scores.get("schema_version") != 2:
         return metric
-    execution = "ex_selected" if scores.get("candidate_protocol") == "observed-final-candidate@1" else "ex_at_1"
+    execution = "selected_ex" if scores.get("candidate_protocol") == "observed-final-candidate@1" else "ex_at_1"
     return {"ex": execution, "em": "structural_match"}.get(metric, metric)
 
 
@@ -198,7 +198,20 @@ def seal_attempt(root: Path, *, baseline: dict, candidate: dict, policy: dict,
                                    "baseline_evidence": baseline_evidence, "candidate_evidence": candidate_evidence})
     result = verify_attempt(root)
     write_json(root / "verification.json", result)
-    (root / "report.md").write_text(f"# Evo verification\n\nScope: {policy.get('stage', 'unspecified')}\n\nAccepted: {result['accepted']}\n\nFitness: {result.get('measurement', {}).get('fitness')}\n\nIssues: {', '.join(result['issues']) or 'none'}\n\nActual changes: actual.patch. Measured inputs, contributions, sample regressions and rules: verification.json. Explanations remain hypotheses; this is not proof of causal improvement or global optimality.\n", encoding="utf-8")
+    measurement = result.get("measurement") or {}
+    report = ["# Evo verification", "", f"Scope: {policy.get('stage', 'unspecified')}", "",
+              f"Accepted: {result['accepted']}", "", f"Fitness: {measurement.get('fitness')}", "",
+              "| Input | Baseline | Candidate | Contribution | Gap |", "| --- | --- | --- | --- | --- |"]
+    for key, item in measurement.get("inputs", {}).items():
+        report.append(f"| {key} | {item.get('baseline')} | {item.get('candidate')} | {measurement.get('contributions', {}).get(key)} | {item.get('reason') or ''} |")
+    report.extend(["", f"Improved samples: {len(measurement.get('improvements', []))}",
+                   f"Regressed samples: {len(measurement.get('regressions', []))}", "",
+                   "Issues: " + (", ".join(result['issues']) or "none"), "",
+                   "[Actual changes](actual.patch) · [Review ledger](review-ledger.json) · [Executed configuration](config.redacted.json)",
+                   "", "[Baseline scores](baseline.scores.json) · [Candidate scores](candidate.scores.json) · [Full verification and rules](verification.json)",
+                   "", "Explanations remain hypotheses. These checks do not prove causal improvement or global optimality.", ""])
+    (root / "report.md").write_text("\n".join(report), encoding="utf-8")
+
     return result
 
 

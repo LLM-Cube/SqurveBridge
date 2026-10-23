@@ -128,7 +128,7 @@ build_evaluation(scores, SimpleNamespace(db_path='db.sqlite'), evo_evidence_dire
                                           command=[sys.executable, 'controlled.py'], scores_path='scores.json', reviews={'improve': review_path},
                                           env={'PYTHONPATH': str(Path(__file__).resolve().parents[1])})
             result = run_verified_search(actions=[action], simulator=simulator, journal_path=journal_path, evolve_dir=evolved, rollouts=1)
-            self.assertEqual(result['verdict']['verdict'], 'CONTINUE', result)
+            self.assertEqual(result['verdict']['verdict'], 'CONTINUE', [node.metadata.get('verification') for node in EvolutionJournal.read(journal_path).nodes])
             attempts = list((evolved / 'verification' / 'attempts').iterdir())
             from unittest.mock import patch
             with patch('subprocess.run', side_effect=AssertionError('offline verification must not execute commands')), patch('reproduce.eval.protocol.execution.SQLExecutor.execute_sqlite', side_effect=AssertionError('offline verification must not execute SQL')):
