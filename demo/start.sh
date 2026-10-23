@@ -179,7 +179,7 @@ trap - EXIT
 log "SqurveBridge demo is up."
 log "  Workspace: http://${WEB_HOST}:${WEB_PORT}"
 log "  API:       http://${API_HOST}:${API_PORT}"
-case "$(printf '%s' "${SQURVE_DEMO_AGENT:-on}" | tr '[:upper:]' '[:lower:]')" in
+case "$(printf '%s' "${SQURVE_DEMO_AGENT:-off}" | tr '[:upper:]' '[:lower:]')" in
   off|0|false|no) log "  Agent:     off (SQURVE_DEMO_AGENT)" ;;
   *) log "  Agent:     embedded Pi (${PI_AGENT_PROVIDER:-${SQURVE_LLM_PROVIDER:-auto}}/${PI_AGENT_MODEL:-${SQURVE_LLM_MODEL:-auto}})" ;;
 esac

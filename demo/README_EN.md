@@ -25,9 +25,14 @@ expose it directly to an untrusted network.
 
 ## Showcase without the Agent
 
+The Agent is disabled by default, including after a restart:
+
 ```bash
-SQURVE_DEMO_AGENT=off ./demo/start.sh
+./demo/start.sh
 ```
+
+To enable it explicitly, stop the running demo and use
+`SQURVE_DEMO_AGENT=on ./demo/start.sh`.
 
 The server then refuses every `/api/agent*` route and the page drops the Agent
 pane. Integrated methods and benchmarks, side-by-side comparison and Actor swaps

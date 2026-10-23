@@ -5,7 +5,7 @@ from collections.abc import Mapping
 
 
 DEPLOYMENT_TARGET_ENV = "SQURVE_DEPLOYMENT_TARGET"
-# Independent of the target: a showcase Demo runs without the embedded Agent.
+# Independent of the target: the Demo defaults to a showcase without the Agent.
 AGENT_ENV = "SQURVE_DEMO_AGENT"
 _AGENT_OFF_VALUES = frozenset({"off", "0", "false", "no"})
 _AGENT_ROUTE_PREFIX = "/api/agent"
@@ -34,7 +34,7 @@ def is_hf_space(environment: Mapping[str, str] | None = None) -> bool:
 
 def agent_enabled(environment: Mapping[str, str] | None = None) -> bool:
     values = os.environ if environment is None else environment
-    return str(values.get(AGENT_ENV, "on")).strip().lower() not in _AGENT_OFF_VALUES
+    return str(values.get(AGENT_ENV, "off")).strip().lower() not in _AGENT_OFF_VALUES
 
 
 def deployment_features(environment: Mapping[str, str] | None = None) -> dict[str, bool]:

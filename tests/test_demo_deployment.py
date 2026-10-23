@@ -26,7 +26,7 @@ class DemoDeploymentTests(unittest.TestCase):
                 "provider_configuration": False,
                 "session_sql_auth": True,
                 "database_upload": False,
-                "agent_chat": True,
+                "agent_chat": False,
                 "live_evaluation": False,
             },
         )

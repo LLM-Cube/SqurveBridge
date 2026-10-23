@@ -38,7 +38,7 @@
 | `SQURVE_DEMO_WEB_PORT` | `5173` | 前端端口 |
 | `PI_AGENT_PROVIDER` | 跟随 `SQURVE_LLM_PROVIDER` | Pi 使用的模型服务 |
 | `PI_AGENT_MODEL` | 跟随 `SQURVE_LLM_MODEL` | Pi 使用的模型 |
-| `SQURVE_DEMO_AGENT` | `on` | 设为 `off` 时为无 Agent 的展示版：服务端拒绝所有 `/api/agent*` 路由，页面不显示 Agent 面板 |
+| `SQURVE_DEMO_AGENT` | `off` | 默认隐藏 Agent 面板并拒绝所有 `/api/agent*` 路由；需要对话功能时显式设为 `on` |
 
 示例：
 
@@ -48,9 +48,13 @@ SQURVE_DEMO_WEB_PORT=5174 ./demo/start.sh
 
 ### 展示版（无 Agent）
 
+默认启动即为无 Agent 展示版，重启后仍然隐藏对话面板：
+
 ```bash
-SQURVE_DEMO_AGENT=off ./demo/start.sh
+./demo/start.sh
 ```
+
+需要恢复 Agent 时使用 `SQURVE_DEMO_AGENT=on ./demo/start.sh`（已运行的服务需先停止）。
 
 不需要 Node 的 Pi SDK 即可展示已接入的方法和 benchmark、横向比较，以及在编排页把某个阶段换成同类型的其他 Actor 形成**变体**，与原方法在同一实验中用相同样本运行并对比。变体只改该次运行的配置，`reproduce/configs/` 不会被修改。
 

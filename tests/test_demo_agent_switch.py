@@ -13,14 +13,14 @@ AGENT_OFF = {"SQURVE_DEMO_AGENT": "off"}
 
 
 class AgentSwitchPolicyTests(unittest.TestCase):
-    def test_the_agent_is_on_unless_switched_off(self):
-        self.assertTrue(deployment_features({})["agent_chat"])
+    def test_the_agent_is_off_by_default_and_can_be_enabled_explicitly(self):
+        self.assertFalse(deployment_features({})["agent_chat"])
         self.assertTrue(deployment_features({"SQURVE_DEMO_AGENT": "on"})["agent_chat"])
         for value in ("off", "OFF", "0", "false", "no"):
             self.assertFalse(deployment_features({"SQURVE_DEMO_AGENT": value})["agent_chat"], value)
 
     def test_switching_the_agent_off_changes_nothing_else(self):
-        on, off = deployment_features({}), deployment_features(AGENT_OFF)
+        on, off = deployment_features({"SQURVE_DEMO_AGENT": "on"}), deployment_features(AGENT_OFF)
         self.assertEqual({**on, "agent_chat": False}, off)
 
     def test_only_agent_routes_are_refused(self):
@@ -29,7 +29,8 @@ class AgentSwitchPolicyTests(unittest.TestCase):
         self.assertEqual(route_denial("GET", "/api/agent/sessions/abc/ws", AGENT_OFF), "agent_disabled")
         self.assertIsNone(route_denial("GET", "/api/agents-catalog", AGENT_OFF))
         self.assertIsNone(route_denial("POST", "/api/query", AGENT_OFF))
-        self.assertIsNone(route_denial("POST", "/api/agent/sessions", {}))
+        self.assertEqual(route_denial("POST", "/api/agent/sessions", {}), "agent_disabled")
+        self.assertIsNone(route_denial("POST", "/api/agent/sessions", {"SQURVE_DEMO_AGENT": "on"}))
 
     def test_it_combines_with_the_hosted_space(self):
         env = {**AGENT_OFF, "SQURVE_DEPLOYMENT_TARGET": "hf-space"}
