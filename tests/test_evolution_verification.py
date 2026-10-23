@@ -197,7 +197,8 @@ class StageBoundaryTests(unittest.TestCase):
                         'measurement': {'computable': self.accepted, 'fitness': .5 if self.accepted else None},
                         'issues': [] if self.accepted else ['incomplete_evidence']}}
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            from reproduce.evolve.artifacts import init_evolve_dir
+            root = init_evolve_dir('controlled', artifacts_root=temporary)
             journal = root / 'journal.json'
             EvolutionJournal('controlled').write(journal)
             def full(action, iteration):
