@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  SAMPLE_LIMITS,
   configKey,
   connectionKeyOf,
   resolveFocusedConfig,
   withConnectionKeys,
 } from './model.js'
 import { experimentCells, variantLabel } from './variantModel.js'
-import { planSummary } from './experimentPlan.js'
+import { planPayload, planSummary } from './experimentPlan.js'
 
 export const RUN_PHASES = [
   'ready',
@@ -115,6 +114,7 @@ export function jobsFromExperiment(experiment, previousJobs = []) {
     if (!cell.job_id) {
       return {
         job_id: `${QUEUED_PREFIX}${cell.cell_id}`,
+        cell_id: cell.cell_id,
         method: cell.method,
         dataset: cell.dataset,
         label: cell.label,
@@ -126,6 +126,8 @@ export function jobsFromExperiment(experiment, previousJobs = []) {
     const previous = known.get(cell.job_id) || { job_id: cell.job_id, method: cell.method, dataset: cell.dataset }
     return {
       ...previous,
+      cell_id: cell.cell_id,
+      queue_position: cell.queue_position,
       label: cell.label,
       status: TERMINAL_JOB_STATUSES.has(previous.status) && !TERMINAL_JOB_STATUSES.has(cell.status)
         ? previous.status
@@ -159,7 +161,8 @@ export function mergeJobDetail(job, detail) {
 }
 
 export const isResumableJob = job => Boolean(
-  job?.resumable
+  (job?.cell_id && !isLaunchedJob(job) && ['failed', 'cancelled'].includes(job?.status))
+  || job?.resumable
   || (['failed', 'cancelled'].includes(job?.status) && job?.checkpoint_present),
 )
 
@@ -373,9 +376,6 @@ export default function RunWorkspace({
   sampleLimit,
   sampleMode,
   sampleSeed,
-  onSampleLimitChange,
-  onSampleModeChange,
-  onSampleSeedChange,
   postJson,
   api,
   onRunStateChange,
@@ -383,6 +383,13 @@ export default function RunWorkspace({
   adoptExperimentId = '',
   liveEvaluation = false,
   variants = [],
+  plan,
+  credentialConfigured,
+  onConfigureSql,
+  onSubmission,
+  onExperimentSnapshot,
+  onEditPlan,
+  onViewComparison,
   t,
 }) {
   const connections = useMemo(
@@ -395,6 +402,8 @@ export default function RunWorkspace({
   const [experiment, setExperiment] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  // Cells the server refused, with the reason for each, so the user can fix them on the Compose page.
+  const [rejections, setRejections] = useState([])
   const [selectedJobId, setSelectedJobId] = useState('')
   const [log, setLog] = useState('')
   const progress = summarizeRunProgress(log, jobs.find(job => job.job_id === selectedJobId))
@@ -404,7 +413,11 @@ export default function RunWorkspace({
     || null
   const runTargets = connections
     .filter(item => item.runnable)
-    .slice(0, MAX_BATCH_TARGETS)
+  const draft = plan || {
+    cells: experimentCells(selectedConnections.map(item => ({ method: item.method, dataset: item.database })), variants),
+    sampling: { limit: sampleLimit, mode: sampleMode, seed: sampleSeed },
+  }
+  const summary = planSummary(draft, { configs, credentialConfigured })
   const primaryConfig = primaryTarget?.config || null
   const actors = useMemo(() => actorNames(primaryConfig), [primaryConfig])
   const selectedJob = jobs.find(job => job.job_id === selectedJobId) || null
@@ -446,7 +459,7 @@ export default function RunWorkspace({
   const activeJobs = jobs.filter(isActiveJob)
   const runnable = Boolean(
     liveEvaluation
-    && runTargets.length + variants.length >= 1
+    && summary.runnable
     && !busy
     && !activeJobs.length,
   )
@@ -457,7 +470,7 @@ export default function RunWorkspace({
     return Promise.all(current.map(async job => {
       if (!isLaunchedJob(job)) return job
       try {
-        return await api(`/api/evaluations/${job.job_id}`)
+        return { ...job, ...await api(`/api/evaluations/${job.job_id}`) }
       } catch {
         return job
       }
@@ -465,7 +478,7 @@ export default function RunWorkspace({
   }
 
   useEffect(() => {
-    if (!api) return undefined
+    if (!api || adoptExperimentId || experiment?.experiment_id) return undefined
     let active = true
     api('/api/session').then(data => {
       if (!active) return
@@ -475,7 +488,7 @@ export default function RunWorkspace({
       if (restored.length) publishRunState(phaseFromJobs(restored))
     }).catch(() => {})
     return () => { active = false }
-  }, [api])
+  }, [api, adoptExperimentId, experiment?.experiment_id])
 
   // An experiment started elsewhere (the Agent, after the user confirmed) is shown here too.
   useEffect(() => {
@@ -485,21 +498,24 @@ export default function RunWorkspace({
       if (!active || !latest?.cells) return
       const adopted = jobsFromExperiment(latest, [])
       setExperiment(latest)
+      onExperimentSnapshot?.(latest)
       setJobs(adopted)
       setSelectedJobId(adopted[0]?.job_id || '')
       publishRunState(phaseFromJobs(adopted))
     }).catch(() => {})
     return () => { active = false }
-  }, [api, adoptExperimentId])
+  }, [api, adoptExperimentId, onExperimentSnapshot])
 
   useEffect(() => {
-    if (!jobs.some(isActiveJob) || !api) return undefined
+    if ((!jobs.some(isActiveJob) && !['running', 'queued'].includes(experiment?.status)) || !api) return undefined
     let active = true
     const timer = setInterval(() => {
       const withCells = experiment?.experiment_id
         ? api(`/api/experiments/${experiment.experiment_id}`)
           .then(latest => {
+            if (!active) return jobs
             setExperiment(latest)
+            onExperimentSnapshot?.(latest)
             return jobsFromExperiment(latest, jobs)
           })
           .catch(() => jobs)
@@ -543,36 +559,17 @@ export default function RunWorkspace({
     if (!runnable) return
     setBusy(true)
     setError('')
+    setRejections([])
+    onSubmission?.({ type: 'submitStarted' })
     publishRunState('evaluating')
     try {
-      const pairs = runTargets.map(item => ({
-        dataset: item.config.dataset,
-        method: item.config.method,
-      }))
-      const payload = {
-        sample_limit: sampleLimit,
-        sample_mode: sampleMode,
-        sample_seed: sampleSeed,
-      }
-      let nextJobs = []
-      if (pairs.length === 1 && !variants.length) {
-        const job = await postJson('/api/evaluations', {
-          ...payload,
-          dataset: pairs[0].dataset,
-          method: pairs[0].method,
-        })
-        nextJobs = [job]
-        setExperiment(null)
-      } else {
-        // Variants always run as experiment cells, next to the configs they came from.
-        const created = await postJson('/api/experiments', {
-          cells: experimentCells(runTargets.map(item => item.config), variants),
-          sampling: { limit: sampleLimit, mode: sampleMode, seed: sampleSeed },
-        })
-        setExperiment(created)
-        onExperimentChange?.(created.experiment_id)
-        nextJobs = jobsFromExperiment(created, [])
-      }
+      // Every run is an experiment, one cell or many, so Compare & History always has its id.
+      const created = await postJson('/api/experiments', planPayload(draft, configs))
+      setExperiment(created)
+      onExperimentChange?.(created.experiment_id)
+      onSubmission?.({ type: 'submitAccepted', experimentId: created.experiment_id })
+      onExperimentSnapshot?.(created)
+      const nextJobs = jobsFromExperiment(created, [])
       setJobs(nextJobs)
       setSelectedJobId(nextJobs[0]?.job_id || '')
       if (runTargets[0]) onFocusConnection?.(runTargets[0].method, runTargets[0].database)
@@ -580,6 +577,8 @@ export default function RunWorkspace({
     } catch (err) {
       const message = sanitizeRunError(err)
       setError(message)
+      setRejections(Array.isArray(err?.cells) ? err.cells : [])
+      onSubmission?.({ type: 'submitRejected', problems: Array.isArray(err?.cells) ? err.cells : [] })
       publishRunState('failed', { error: message })
     } finally {
       setBusy(false)
@@ -595,6 +594,7 @@ export default function RunWorkspace({
       if (experiment?.experiment_id) {
         const latest = await postJson(`/api/experiments/${experiment.experiment_id}/cancel`, {})
         setExperiment(latest)
+        onExperimentSnapshot?.(latest)
         current = jobsFromExperiment(latest, jobs)
       } else {
         await Promise.all(activeJobs.map(job => postJson(`/api/evaluations/${job.job_id}/cancel`, {})))
@@ -620,6 +620,19 @@ export default function RunWorkspace({
     setError('')
     publishRunState('evaluating')
     try {
+      if (experiment?.experiment_id) {
+        let latest
+        for (const job of targets) {
+          latest = await postJson(`/api/experiments/${experiment.experiment_id}/cells/${job.cell_id}/resume`, {})
+          setExperiment(latest)
+          onExperimentSnapshot?.(latest)
+          const next = jobsFromExperiment(latest, [])
+          setJobs(next)
+          setSelectedJobId(next.find(item => item.cell_id === job.cell_id)?.job_id || next[0]?.job_id || '')
+          publishRunState(phaseFromJobs(next))
+        }
+        return
+      }
       const resumed = await Promise.all(
         targets.map(job => postJson(`/api/evaluations/${job.job_id}/resume`, {})),
       )
@@ -635,6 +648,20 @@ export default function RunWorkspace({
     } finally {
       setBusy(false)
     }
+  }
+
+  const cancelCell = async job => {
+    if (!experiment?.experiment_id || !job.cell_id || busy) return
+    setBusy(true)
+    try {
+      const latest = await postJson(`/api/experiments/${experiment.experiment_id}/cells/${job.cell_id}/cancel`, {})
+      setExperiment(latest)
+      onExperimentSnapshot?.(latest)
+      const next = jobsFromExperiment(latest, jobs)
+      setJobs(next)
+      publishRunState(phaseFromJobs(next))
+    } catch (err) { setError(sanitizeRunError(err)) }
+    finally { setBusy(false) }
   }
 
   const statusLabel = () => {
@@ -659,10 +686,15 @@ export default function RunWorkspace({
       <section className="run-parameter-console" data-testid="run-parameter-console" aria-labelledby="run-params-title">
         <header>
           <h3 id="run-params-title">{t('run.parameters')}</h3>
+          {onEditPlan && <button type="button" className="flow-secondary-action" onClick={onEditPlan}>{t('plan.edit')}</button>}
         </header>
 
         {!connections.length && <p className="run-empty">{t('run.noConnections')}</p>}
         {!liveEvaluation && <p className="run-batch-note">{t('run.configRunUnavailable')}</p>}
+        {summary.reason && <p role="status">{t(`grid.${summary.reason}`)}</p>}
+        {summary.reason === 'credentialMissing' && <button type="button" onClick={onConfigureSql}>{t('header.configureLocalApi')}</button>}
+        <p>{t('plan.sampling', { limit: sampleLimit, mode: t(sampleMode === 'random' ? 'configure.sampleRandom' : 'configure.sampleSlice'), seed: sampleMode === 'random' ? sampleSeed : '—' })}</p>
+        {experiment && <p className="run-observed-plan">{t('plan.observed', { id: experiment.experiment_id, cells: experiment.cells?.length || 0, limit: experiment.sampling?.limit ?? '—', mode: t(experiment.sampling?.mode === 'random' ? 'configure.sampleRandom' : 'configure.sampleSlice'), seed: experiment.sampling?.mode === 'random' ? experiment.sampling.seed : '—' })}</p>}
 
         <dl className="run-param-summary">
           <div>
@@ -699,38 +731,7 @@ export default function RunWorkspace({
           </div>
         </dl>
 
-        <div className="run-batch-params" data-testid="run-config-sampling">
-          <div className="run-sampling-fields">
-            <label>
-              <span>{t('configure.sampleLimit')}</span>
-              <select
-                value={sampleLimit}
-                onChange={event => onSampleLimitChange?.(Number(event.target.value))}
-              >
-                {SAMPLE_LIMITS.map(limit => (
-                  <option key={limit} value={limit}>{limit}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span>{t('configure.sampleMode')}</span>
-              <select
-                value={sampleMode}
-                onChange={event => onSampleModeChange?.(event.target.value)}
-              >
-                <option value="slice">{t('configure.sampleSlice')}</option>
-                <option value="random">{t('configure.sampleRandom')}</option>
-              </select>
-            </label>
-            <label>
-              <span>{t('configure.sampleSeed')}</span>
-              <input
-                type="number"
-                value={sampleSeed}
-                onChange={event => onSampleSeedChange?.(Number(event.target.value))}
-              />
-            </label>
-          </div>
+        <div className="run-batch-params">
           <p>{t('run.batchTargetCount', { count: runTargets.length, max: MAX_BATCH_TARGETS })}</p>
           <p className="run-plan-summary" data-testid="run-plan-summary">
             {(() => {
@@ -753,6 +754,7 @@ export default function RunWorkspace({
         </div>
 
         <div className="run-action-bar">
+          {experiment?.experiment_id && onViewComparison && <button type="button" className="flow-secondary-action" onClick={() => onViewComparison(experiment.experiment_id)}>{t('plan.viewComparison')}</button>}
           <button
             type="button"
             className="run-primary-action"
@@ -808,7 +810,10 @@ export default function RunWorkspace({
                         {isResumableJob(job) && <em>{t('run.checkpointReady')}</em>}
                       </span>
                     )}
+                    {job.queue_position != null && <small>{t('plan.queuePosition', { position: job.queue_position })}</small>}
+                    {job.error_code && <small>{job.error_code}</small>}
                   </button>
+                  {experiment?.experiment_id && isActiveJob(job) && <button type="button" disabled={busy} onClick={() => cancelCell(job)} aria-label={t('plan.cancelCell', { name: job.label || job.method, dataset: job.dataset })}>{t('plan.cancelCellAction')}</button>}
                 </li>
               )
             })}
@@ -848,5 +853,14 @@ export default function RunWorkspace({
     </div>
 
     {error && <p className="error-banner" role="alert">{error}</p>}
+    {rejections.length > 0 && (
+      <ul className="run-rejections" data-testid="run-rejections">
+        {rejections.map(item => (
+          <li key={`${item.method}/${item.dataset}/${item.error_code || 'stage'}`}>
+            {item.method} / {item.dataset}: {item.error_code || (item.stages || []).map(problem => problem.reason).join(', ')}
+          </li>
+        ))}
+      </ul>
+    )}
   </div>
 }

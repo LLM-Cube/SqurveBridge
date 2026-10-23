@@ -6368,13 +6368,57 @@
 .flow-demo .results-matrix [data-slot="8"] { background: var(--series-8); }
 
 /* Compose: experiment grid */
-.flow-demo .experiment-grid { display: grid; gap: 10px; margin-bottom: 18px; border: 1px solid #e6dccb; border-radius: 10px; padding: 16px; background: #fbf8f1; }
+.flow-demo .experiment-grid { display: grid; min-width: 0; gap: 10px; margin-bottom: 18px; border: 1px solid #e6dccb; border-radius: 10px; padding: 16px; background: #fbf8f1; }
 .flow-demo .experiment-grid header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
 .flow-demo .experiment-grid h3 { margin: 0 0 4px; color: #2e2618; }
 .flow-demo .experiment-grid header p { margin: 0; max-width: 64ch; color: #6b6152; font-size: 13px; }
 .flow-demo .experiment-grid header strong { color: #2e2618; font-size: 13px; }
-.flow-demo .experiment-grid-wrap { max-width: 100%; overflow-x: auto; }
-.flow-demo .experiment-grid table { width: auto; border-collapse: separate; border-spacing: 2px; font-size: 12px; }
+.flow-demo .experiment-grid-sampling { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 24px; padding: 18px; border: 1px solid #e6dccb; border-radius: 8px; background: #fffdf8; }
+.flow-demo .experiment-grid-sampling-heading { grid-column: 1 / -1; display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 16px; }
+.flow-demo .experiment-grid-sampling-heading h4 { margin: 0; color: #2e2618; font-size: 14px; }
+.flow-demo .experiment-grid-sampling-heading > span { color: #6b6152; font-size: 12px; }
+.flow-demo .experiment-grid-sampling > label { display: flex; flex-direction: column; gap: 8px; min-width: 0; color: #2e2618; font-size: 13px; font-weight: 600; }
+.flow-demo .experiment-grid-sampling label > span { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.flow-demo .experiment-grid-sampling em { border-radius: 4px; padding: 2px 6px; background: #efe9de; color: #6b6152; font-size: 10px; font-style: normal; font-weight: 500; }
+.flow-demo .experiment-grid-sampling select,
+.flow-demo .experiment-grid-sampling input { box-sizing: border-box; width: 100%; min-width: 0; min-height: 42px; margin: 0; padding: 8px 12px; border: 1px solid #cbbfa9; border-radius: 6px; background: #fbf8f1; color: #2e2618; font: inherit; font-weight: 500; }
+.flow-demo .experiment-grid-sampling input:disabled { background: #f1eee7; border-color: #e6dccb; color: #817665; cursor: not-allowed; }
+.flow-demo .experiment-grid-sampling small { color: #6b6152; font-size: 12px; font-weight: 400; line-height: 1.65; }
+.flow-demo .experiment-grid-sampling-note { grid-column: 1 / -1; margin: 0; padding-top: 12px; border-top: 1px solid #e6dccb; color: #6b6152; font-size: 12px; line-height: 1.6; }
+.flow-demo .experiment-grid-guide { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px 24px; padding: 8px 0 0; color: #6b6152; font-size: 12px; line-height: 1.65; }
+.flow-demo .experiment-grid-guide > span { flex: 1 1 320px; }
+.flow-demo .experiment-grid-guide b { display: block; margin-bottom: 2px; color: #2e2618; font-size: 13px; }
+.flow-demo .experiment-grid :is(button, input, select):focus-visible { outline: 2px solid #2a78d6; outline-offset: 3px; }
+.flow-demo .experiment-plan-footer { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px 24px; margin-top: 8px; padding-top: 16px; border-top: 1px solid #e6dccb; }
+.flow-demo .experiment-plan-estimate { flex: 1 1 320px; }
+.flow-demo .experiment-plan-eyebrow { color: #6b6152; font-size: 11px; }
+.flow-demo .experiment-plan-estimate p { margin: 5px 0; color: #2e2618; font-size: 15px; font-weight: 600; }
+.flow-demo .experiment-plan-estimate small { display: block; max-width: 90ch; color: #6b6152; font-size: 12px; line-height: 1.6; }
+.flow-demo .experiment-plan-footer > button { min-height: 42px; border: 1px solid #6f4a1b; border-radius: 6px; padding: 10px 22px; background: #6f4a1b; color: #fffdf7; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.flow-demo .experiment-plan-footer > button:hover:not(:disabled) { background: #513613; }
+.flow-demo .experiment-plan-footer > button:disabled { opacity: .5; cursor: not-allowed; }
+.flow-demo .experiment-plan-footer > p { flex-basis: 100%; margin: 0; color: #9c4324; font-size: 12px; }
+@media (max-width: 760px) {
+  .flow-demo .experiment-grid-sampling { grid-template-columns: 1fr; padding: 14px; gap: 18px; }
+  .flow-demo .experiment-plan-footer > button { width: 100%; }
+}
+.flow-demo .experiment-grid-wrap { min-width: 0; max-width: 100%; overflow-x: auto; }
+.flow-demo .experiment-plan-footer { position: sticky; bottom: 0; z-index: 4; background: #fbf8f1; padding-bottom: 8px; }
+.flow-demo :is(.experiment-page, .experiment-section) { min-width: 0; max-width: 100%; grid-template-columns: minmax(0, 1fr); }
+.flow-demo .experiment-section > * { min-width: 0; max-width: 100%; }
+.flow-demo .experiment-section { overflow-x: clip; }
+@media (max-width: 760px), (max-height: 650px) {
+  .flow-demo .experiment-plan-footer { position: static; }
+}
+.flow-demo .experiment-grid-bulk,
+.flow-demo .evidence-view-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.flow-demo .evidence-view-tabs button { min-height: 36px; padding: 6px 14px; border: 1px solid #cbbfa9; border-radius: 6px; background: #fffdf8; color: #6b6152; font: inherit; font-size: 13px; cursor: pointer; }
+.flow-demo .evidence-view-tabs button[aria-pressed="true"] { border-color: #6f4a1b; background: #efe9de; color: #2e2618; font-weight: 600; }
+.flow-demo .experiment-grid-variant-list { display: grid; gap: 8px; padding: 0; margin: 4px 0; list-style: none; font-size: 12px; }
+.flow-demo .experiment-grid-variant-list li { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 8px; border: 1px solid #e6dccb; border-radius: 6px; overflow-wrap: anywhere; }
+.flow-demo .compose-actor-controls { min-width: 0; margin: 0; padding: 0; border: 0; }
+.flow-demo .run-parameter-console > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.flow-demo .experiment-grid table { width: 100%; border-collapse: separate; border-spacing: 2px; font-size: 12px; }
 .flow-demo .experiment-grid th button { border: 0; padding: 4px 6px; background: transparent; color: #6b6152; font: inherit; font-weight: 600; white-space: nowrap; }
 .flow-demo .experiment-grid th button:hover { color: #2e2618; text-decoration: underline; }
 .flow-demo .experiment-grid td { min-width: 112px; height: 40px; padding: 0 4px; border-radius: 4px; background: #efe9de; text-align: center; white-space: nowrap; }

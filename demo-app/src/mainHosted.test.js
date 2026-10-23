@@ -104,7 +104,7 @@ test('hosted App exposes session SQL configuration instead of local env configur
   assert.match(document.body.textContent, /64 canonical configurations/i)
   assert.match(document.body.textContent, /Method × Database/i)
   const tabs = screen.getByRole('navigation', { name: 'Workflow stages' })
-  assert.ok(within(tabs).getByRole('button', { name: 'Experiment' }))
+  assert.ok(within(tabs).getByRole('button', { name: /^Experiment/ }))
   // The experiment page is mounted but hidden until its tab is opened.
   const sections = screen.getByRole('navigation', { name: 'Experiment steps', hidden: true })
   assert.ok(within(sections).getByRole('button', { name: /Run/, hidden: true }))
@@ -178,7 +178,7 @@ test('local App renders the same full-flow surface as the hosted deployment', as
   assert.ok(screen.getByRole('button', { name: 'qwen-plus' }))
   assert.equal(screen.getByRole('button', { name: 'qwen-plus' }).getAttribute('aria-pressed'), 'true')
   assert.doesNotMatch(document.body.textContent, /Hugging Face Live Demo/i)
-  assert.ok(within(screen.getByRole('navigation', { name: 'Workflow stages' })).getByRole('button', { name: 'Experiment' }))
+  assert.ok(within(screen.getByRole('navigation', { name: 'Workflow stages' })).getByRole('button', { name: /^Experiment/ }))
   assert.ok(document.querySelector('.flow-demo'))
 })
 

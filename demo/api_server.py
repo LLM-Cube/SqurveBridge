@@ -2601,9 +2601,9 @@ _IDENTIFIER = re.compile(r"(?!.*\.\.)[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}")
 _MAX_MATRIX_AXIS = 12
 
 
-def _identifier_list(raw: str) -> list[str] | None:
+def _identifier_list(raw: str, maximum: int = _MAX_MATRIX_AXIS) -> list[str] | None:
     values = list(dict.fromkeys(item.strip() for item in str(raw or "").split(",") if item.strip()))
-    if not values or len(values) > _MAX_MATRIX_AXIS or not all(_IDENTIFIER.fullmatch(item) for item in values):
+    if not values or len(values) > maximum or not all(_IDENTIFIER.fullmatch(item) for item in values):
         return None
     return values
 
@@ -2682,6 +2682,7 @@ def _matrix_cell(method: str, dataset: str, scores: dict | None, source: str | N
     cell = {
         "method": method,
         "dataset": dataset,
+        "stages": _scores_stages(scores) if scores else {},
         "status": status,
         "values": {},
         "not_computable": {},
@@ -2772,14 +2773,15 @@ def _mark_alignment(cells: list[dict], datasets: list[str]) -> dict:
 
 
 def _results_matrix(args) -> tuple[dict | None, tuple | None]:
-    methods = _identifier_list(args.get("methods", ""))
+    experiment_id = str(args.get("experiment_id") or "").strip()
+    method_limit = MAX_CELLS if experiment_id else _MAX_MATRIX_AXIS
+    methods = _identifier_list(args.get("methods", ""), method_limit)
     datasets = _identifier_list(args.get("datasets", ""))
     if methods is None or datasets is None:
-        return None, _json_error(f"methods and datasets need 1 to {_MAX_MATRIX_AXIS} simple identifiers.")
+        return None, _json_error(f"methods need 1 to {method_limit} and datasets 1 to {_MAX_MATRIX_AXIS} simple identifiers.")
     split = str(args.get("split", "dev")).strip()
     if not _IDENTIFIER.fullmatch(split):
         return None, _json_error("split must be a simple identifier.")
-    experiment_id = str(args.get("experiment_id") or "").strip()
     if experiment_id:
         try:
             sampling = _experiments.experiment_sampling(experiment_id)

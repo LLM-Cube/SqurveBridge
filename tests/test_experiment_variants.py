@@ -109,6 +109,9 @@ class VariantResultsTests(ResultsApiTestCase):
         self.assertEqual(payload["labels"][VARIANT], "c3sql · c3sql_generate→FINSQLGenerator")
         self.assertEqual(payload["labels"]["c3sql"], "c3sql")
         self.assertTrue(payload["alignment"]["spider"]["aligned"])
+        variant_cell = self.cell(payload, VARIANT, "spider")
+        self.assertEqual(variant_cell["stages"], SWAP, "a matrix cell names the Actor swaps of its variant")
+        self.assertEqual(self.cell(payload, "c3sql", "spider")["stages"], {})
 
     def test_an_archived_variant_never_stands_in_for_its_method(self):
         self.archive(self.variant_scores([1, 1, 1], timestamp="2026-10-22T10:00:00"))

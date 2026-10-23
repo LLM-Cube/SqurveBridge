@@ -87,6 +87,19 @@ class ResultsApiTestCase(unittest.TestCase):
 
 
 class MatrixTests(ResultsApiTestCase):
+    def test_every_cell_of_a_valid_large_experiment_can_be_compared_and_exported(self):
+        experiment = self.api_server._experiments.create(
+            [("alpha", "minibench", {"generate": f"Actor{index}"}) for index in range(13)],
+            {"limit": 3, "mode": "slice", "seed": 42},
+        )
+        query = {"experiment_id": experiment["experiment_id"],
+                 "methods": ",".join(cell["variant"] for cell in experiment["cells"]),
+                 "datasets": "minibench"}
+        response = self.client.get("/api/results/matrix", query_string=query)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.json["cells"]), 13)
+        self.assertEqual(self.client.get("/api/results/matrix.csv", query_string=query).status_code, 200)
+
     def test_archived_runs_fill_the_method_by_benchmark_grid(self):
         self.archive(make_scores("alpha", "minibench", correct=[1, 1, 0], tokens=900, latency=4.0))
         self.archive(make_scores("beta", "minibench", correct=[1, 0, 0]))

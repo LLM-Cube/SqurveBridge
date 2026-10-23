@@ -14,6 +14,7 @@ const ConnectionSwitcher = memo(function ConnectionSwitcher({
   t,
   onFocusConnection,
   onRemoveConnection,
+  readOnly,
 }) {
   if (!connections.length) {
     return <p className="compose-switcher-empty">{t('compose.noConnections')}</p>
@@ -93,7 +94,7 @@ const ConnectionSwitcher = memo(function ConnectionSwitcher({
                 className="compose-switcher-remove"
                 aria-label={removeLabel}
                 title={removeLabel}
-                disabled={connections.length < 2}
+                disabled={readOnly}
                 onClick={() => onRemoveConnection(connection.method, connection.database)}
               >
                 ×
@@ -123,6 +124,7 @@ export default function ConnectionComposer({
   variants,
   onAddVariant,
   onRemoveVariant,
+  readOnly = false,
   t,
 }) {
   const readyKeys = useMemo(() => buildReadyKeys(configs), [configs])
@@ -130,11 +132,10 @@ export default function ConnectionComposer({
   const connections = useMemo(() => selectedConnections || [], [selectedConnections])
   const focusedIndex = Math.max(0, connections.findIndex(item => item.key === focusedKey))
 
-  // The last pair cannot be removed: the experiment always has something to run.
   const removeConnection = useCallback((method, database) => {
-    if (connections.length < 2) return
+    if (readOnly) return
     onToggleConnection(method, database)
-  }, [connections, onToggleConnection])
+  }, [readOnly, onToggleConnection])
 
   return <section id="compose" className="flow-module flow-glass connection-composer">
     <header className="flow-module-header">
@@ -147,6 +148,7 @@ export default function ConnectionComposer({
 
     <aside className="compose-workflow-panel compose-workflow-panel-solo" data-testid="compose-workflow-panel">
       <ConnectionSwitcher
+        readOnly={readOnly}
         connections={connections}
         focusedKey={focusedKey}
         readyKeys={readyKeys}
@@ -155,6 +157,7 @@ export default function ConnectionComposer({
         onFocusConnection={onFocusConnection}
         onRemoveConnection={removeConnection}
       />
+      <fieldset disabled={readOnly} className="compose-actor-controls">
       <MemoActorWorkflow
         focusedConfig={focusedConfig}
         stageActors={stageActors}
@@ -163,6 +166,7 @@ export default function ConnectionComposer({
         onRemoveVariant={onRemoveVariant}
         t={t}
       />
+      </fieldset>
       <MemoIntegrationProvenance focusedConfig={focusedConfig} t={t} />
     </aside>
   </section>

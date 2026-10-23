@@ -123,6 +123,7 @@ export default function ResultsMatrix({
   configs = [],
   connections = [],
   experimentId = '',
+  fixedSource,
   sampleLimit = 20,
   sampleMode = 'slice',
   sampleSeed = 42,
@@ -132,7 +133,8 @@ export default function ResultsMatrix({
   onReplay,
   t,
 }) {
-  const [source, setSource] = useState(experimentId ? 'experiment' : liveEvaluation ? 'archive' : 'recorded')
+  const [sourceState, setSource] = useState(experimentId ? 'experiment' : liveEvaluation ? 'archive' : 'recorded')
+  const source = fixedSource || sourceState
   const [scope, setScope] = useState(liveEvaluation ? 'selection' : 'all')
   const [sampling, setSampling] = useState(
     liveEvaluation ? { limit: sampleLimit, mode: sampleMode, seed: sampleSeed } : RECORDED,
@@ -219,21 +221,21 @@ export default function ResultsMatrix({
       </header>
 
       <div className="results-controls" role="group" aria-label={t('results.controls')}>
-        <label>
+        {!fixedSource && <label>
           <span>{t('results.source')}</span>
           <select aria-label={t('results.source')} value={source} onChange={event => setSource(event.target.value)}>
             {experimentId && <option value="experiment">{t('results.sourceExperiment')}</option>}
             {liveEvaluation && <option value="archive">{t('results.sourceArchive')}</option>}
             <option value="recorded">{t('results.sourceRecorded')}</option>
           </select>
-        </label>
-        <label>
+        </label>}
+        {source !== 'experiment' && <label>
           <span>{t('results.scope')}</span>
           <select aria-label={t('results.scope')} value={scope} onChange={event => setScope(event.target.value)}>
             <option value="selection">{t('results.scopeSelection')}</option>
             <option value="all">{t('results.scopeAll')}</option>
           </select>
-        </label>
+        </label>}
         {source === 'archive' && (
           <>
             <label>

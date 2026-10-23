@@ -240,6 +240,21 @@ class ExperimentControlTests(ExperimentApiTestCase):
         response = self.client.post(f"/api/experiments/{experiment_id}/cells/c1/resume")
         self.assertEqual(response.status_code, 409)
 
+    def test_a_cancelled_queued_cell_can_rejoin_its_experiment(self):
+        experiment_id = self.create([
+            {"method": "c3sql", "dataset": "spider"},
+            {"method": "dinsql", "dataset": "spider"},
+            {"method": "resdsql", "dataset": "spider"},
+        ]).json["experiment_id"]
+        self.client.post(f"/api/experiments/{experiment_id}/cancel")
+        response = self.client.post(f"/api/experiments/{experiment_id}/cells/c3/resume")
+        self.assertEqual(response.status_code, 202)
+        cell = response.json["cells"][2]
+        self.assertEqual(cell["cell_id"], "c3")
+        self.assertEqual(cell["status"], "running")
+        self.assertEqual(len(self.backend.launched), 3)
+        self.assertEqual(self.backend.resumed, [], "an unstarted cell launches normally")
+
     def test_resuming_a_cell_waits_for_capacity(self):
         experiment_id = self.create([
             {"method": "c3sql", "dataset": "spider"},

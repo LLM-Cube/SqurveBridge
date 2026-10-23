@@ -13,7 +13,7 @@ Object.defineProperty(globalThis, 'localStorage', {
   configurable: true,
   value: window.localStorage,
 })
-const { act, cleanup, fireEvent, render, screen, within } = await import('@testing-library/react')
+const { act, cleanup, fireEvent, render, screen, waitFor, within } = await import('@testing-library/react')
 const userEvent = (await import('@testing-library/user-event')).default
 registerLoader('./cssTestLoader.mjs', import.meta.url)
 const unregister = register()
@@ -76,7 +76,7 @@ async function goToStep(user, name) {
     await user.click(within(tabs).getByRole('button', { name }))
     return
   }
-  await user.click(within(tabs).getByRole('button', { name: 'Experiment' }))
+  await user.click(within(tabs).getByRole('button', { name: /^Experiment/ }))
   const sections = screen.getByRole('navigation', { name: 'Experiment steps' })
   await user.click(within(sections).getByRole('button', { name: new RegExp(name) }))
 }
@@ -108,7 +108,7 @@ test('renders five bilingual modules in process order', () => {
   const tabs = screen.getByRole('navigation', { name: 'Workflow stages' })
   assert.deepEqual(
     within(tabs).getAllByRole('button').map(button => button.textContent),
-    ['Studio', 'Experiment', 'Query'],
+    ['Studio', 'ExperimentDraft', 'Query'],
     'compose, run and compare & history are one experiment page',
   )
   assert.ok(document.querySelector('.agent-chat-body'))
@@ -158,7 +158,7 @@ test('switches process pages from the stage tabs', async () => {
   await goToStep(user, 'Compare & History')
   assert.equal(stage.getAttribute('data-active-section'), 'evidence')
   const tabs = screen.getByRole('navigation', { name: 'Workflow stages' })
-  assert.equal(within(tabs).getByRole('button', { name: 'Experiment' }).getAttribute('aria-current'), 'page')
+  assert.equal(within(tabs).getByRole('button', { name: /^Experiment/ }).getAttribute('aria-current'), 'page')
   const sections = screen.getByRole('navigation', { name: 'Experiment steps' })
   assert.equal(
     within(sections).getByRole('button', { name: /Compare & History/ }).getAttribute('aria-current'),
@@ -372,15 +372,16 @@ test('unselecting a matrix cell removes its connection', async () => {
   assert.equal(within(grid).getByRole('checkbox', { name: 'DINSQL × BIRD' }).checked, false)
 })
 
-test('the last selected cell cannot be unselected', async () => {
+test('the last selected cell can be cleared and the plan becomes empty', async () => {
   renderDemo()
   const user = userEvent.setup()
 
   await goToStep(user, 'Compose')
   const grid = screen.getByTestId('experiment-grid')
   await user.click(within(grid).getByRole('checkbox', { name: 'C3SQL × Spider' }))
-  assert.equal(screen.getAllByRole('button', { name: /^Focus connection / }).length, 1)
-  assert.equal(within(grid).getByRole('checkbox', { name: 'C3SQL × Spider' }).checked, true)
+  assert.equal(screen.queryAllByRole('button', { name: /^Focus connection / }).length, 0)
+  assert.equal(within(grid).getByRole('checkbox', { name: 'C3SQL × Spider' }).checked, false)
+  assert.equal(within(grid).getByRole('button', { name: 'Go to run' }).disabled, true)
 })
 
 test('switches inspected workflow across multiple selected connections', async () => {
@@ -481,7 +482,7 @@ test('translates the process navigation and board controls', async () => {
 
   const tabs = screen.getByRole('navigation', { name: '工作流阶段' })
   assert.ok(tabs)
-  await user.click(within(tabs).getByRole('button', { name: '实验' }))
+  await user.click(within(tabs).getByRole('button', { name: /^实验/ }))
   const sections = screen.getByRole('navigation', { name: '实验步骤' })
   await user.click(within(sections).getByRole('button', { name: /运行/ }))
   assert.match(document.querySelector('#board').textContent, /参数工作台/)
@@ -571,6 +572,7 @@ test('expands archive charts inline without requesting raw files on hosted demo'
   const user = userEvent.setup()
 
   await goToStep(user, 'Compare & History')
+  await user.click(screen.getByRole('button', { name: 'Past experiments' }))
   await screen.findByText('run-archive-1')
   await screen.findByRole('button', { name: 'Open run' })
   await user.click(screen.getByRole('button', { name: 'Open run' }))
@@ -600,12 +602,19 @@ test('keeps config-run jobs labelled with their immutable connection after focus
     ]),
   }
   const postJson = async (path, body) => {
-    if (path === '/api/evaluations') {
+    if (path === '/api/experiments') {
       return {
-        job_id: 'job-1',
-        method: body.method,
-        dataset: body.dataset,
+        experiment_id: 'exp-1',
         status: 'completed',
+        sampling: body.sampling,
+        cells: body.cells.map((cell, index) => ({
+          cell_id: `c${index + 1}`,
+          method: cell.method,
+          dataset: cell.dataset,
+          job_id: 'job-1',
+          status: 'completed',
+          progress: {},
+        })),
       }
     }
     return {}
@@ -682,35 +691,6 @@ test('each matrix cell shows one state: no config, not installed, or its checkbo
   assert.doesNotMatch(selectable.textContent, /no config|not installed/)
 })
 
-test('the benchmark comparison sits under the results matrix and compares the chosen methods', async () => {
-  const matrix = {
-    methods: ['c3sql', 'dinsql'],
-    datasets: ['spider'],
-    metrics: [{ id: 'ex', label: 'Execution accuracy' }],
-    sampling: { limit: 20, mode: 'random', seed: 42 },
-    labels: { c3sql: 'C3SQL', dinsql: 'DINSQL' },
-    alignment: { spider: { aligned: true, sample_hash: 'x', methods: ['c3sql', 'dinsql'] } },
-    cells: [
-      { method: 'c3sql', dataset: 'spider', status: 'ok', values: { ex: 0.8 }, sample_count: 20, run_id: 'run-a' },
-      { method: 'dinsql', dataset: 'spider', status: 'ok', values: { ex: 0.77 }, sample_count: 20, run_id: 'run-b' },
-    ],
-  }
-  const api = async path => {
-    if (String(path).startsWith('/api/results/matrix')) return matrix
-    return { runs: [] }
-  }
-  renderDemo('en-US', baseCapabilities, { api })
-  const user = userEvent.setup()
-  await goToStep(user, 'Compare & History')
-  const benchmark = await screen.findByRole('group', { name: 'Benchmark' })
-  await user.click(within(benchmark).getByRole('button', { name: 'spider' }))
-  await user.click(screen.getByRole('checkbox', { name: 'C3SQL' }))
-  await user.click(screen.getByRole('checkbox', { name: 'DINSQL' }))
-  const table = screen.getByRole('table', { name: 'Metrics on spider' })
-  assert.equal(table.querySelectorAll('tbody tr').length, 2)
-  assert.equal(within(table).getByRole('row', { name: /C3SQL/ }).getAttribute('data-best'), 'true')
-})
-
 test('an unsent draft plan survives a page reload', async () => {
   const first = renderDemo()
   const user = userEvent.setup()
@@ -723,4 +703,111 @@ test('an unsent draft plan survives a page reload', async () => {
   await goToStep(user, 'Compose')
   assert.equal(screen.getByRole('checkbox', { name: 'C3SQL × BIRD' }).checked, true, 'the draft is restored')
   assert.equal(screen.getByRole('checkbox', { name: 'C3SQL × Spider' }).checked, true)
+})
+
+test('the draft keeps the experiment sampling across a reload', async () => {
+  const first = renderDemo()
+  const user = userEvent.setup()
+  await goToStep(user, 'Compose')
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Sample limit' }), '50')
+  first.unmount()
+
+  renderDemo()
+  await goToStep(user, 'Compose')
+  assert.equal(screen.getByRole('combobox', { name: 'Sample limit' }).value, '50')
+})
+
+test('a past experiment can be used as the template of a new plan', async () => {
+  const api = async path => {
+    if (String(path) === '/api/experiments') {
+      return {
+        experiments: [{
+          experiment_id: 'exp-old',
+          status: 'completed',
+          sampling: { limit: 50, mode: 'random', seed: 7 },
+          created_at: 1700000100,
+          cells: [{ method: 'c3sql', dataset: 'bird', stages: {} }],
+        }],
+      }
+    }
+    return { runs: [] }
+  }
+  renderDemo('en-US', baseCapabilities, { api })
+  const user = userEvent.setup()
+  await goToStep(user, 'Compare & History')
+  await user.click(screen.getByRole('button', { name: 'Past experiments' }))
+  await user.click(await screen.findByRole('button', { name: 'Use as template' }))
+
+  const stage = screen.getByTestId('flow-stage')
+  assert.equal(stage.getAttribute('data-active-section'), 'compose')
+  assert.equal(screen.getByRole('combobox', { name: 'Sample limit' }).value, '50')
+  assert.equal(screen.getByRole('checkbox', { name: 'C3SQL × BIRD' }).checked, true)
+})
+
+test('a running experiment is shown again after the page is reloaded', async () => {
+  const running = {
+    experiment_id: 'exp-live',
+    status: 'running',
+    sampling: { limit: 20, mode: 'slice', seed: 42 },
+    created_at: 1700000300,
+    cells: [{ cell_id: 'c1', method: 'c3sql', dataset: 'spider', job_id: null, status: 'running', progress: {} }],
+  }
+  const api = async path => {
+    if (String(path) === '/api/experiments') return { experiments: [running] }
+    if (String(path) === '/api/experiments/exp-live') return running
+    return { runs: [] }
+  }
+  renderDemo('en-US', baseCapabilities, { api })
+  const user = userEvent.setup()
+  await goToStep(user, 'Run')
+  await waitFor(() => assert.match(screen.getByTestId('run-batch-monitor').textContent, /c3sql \/ spider/))
+})
+
+test('the Experiment tab shows where the plan is while it runs', async () => {
+  const running = {
+    experiment_id: 'exp-run',
+    status: 'running',
+    sampling: { limit: 20, mode: 'slice', seed: 42 },
+    created_at: 1700000400,
+    cells: [{ cell_id: 'c1', method: 'c3sql', dataset: 'spider', job_id: null, status: 'running', progress: {} }],
+  }
+  const api = async path => (String(path) === '/api/experiments' ? { experiments: [] } : { runs: [] })
+  const postJson = async (path, body) => (path === '/api/experiments'
+    ? { ...running, sampling: body.sampling }
+    : {})
+  renderDemo('en-US', { ...baseCapabilities, deployment: { features: { live_evaluation: true } } }, { api, postJson, sqlAuth: { configured: true } })
+  const user = userEvent.setup()
+  await goToStep(user, 'Run')
+  await user.click(screen.getByRole('button', { name: 'Run config' }))
+  await waitFor(() => assert.equal(screen.getByTestId('experiment-status').textContent, 'Running'))
+})
+
+test('an archived run of a variant says so, next to its method', async () => {
+  const api = async path => {
+    if (String(path).startsWith('/api/archive')) {
+      return {
+        runs: [{
+          run_id: 'spider-c3sql-variant',
+          method: 'c3sql',
+          variant: 'c3sql.var-1a2b3c',
+          label: 'c3sql · c3sql_generate→FINSQLGenerator',
+          stages: { c3sql_generate: 'FINSQLGenerator' },
+          dataset: 'spider',
+          metrics: { ex: 0.7 },
+          sample_count: 20,
+          file_count: 1,
+          files: [],
+        }],
+        filters: { datasets: ['spider'], methods: ['c3sql'], sources: ['artifacts'] },
+        total: 1,
+      }
+    }
+    return { runs: [] }
+  }
+  renderDemo('en-US', baseCapabilities, { api })
+  const user = userEvent.setup()
+  await goToStep(user, 'Compare & History')
+  const card = await screen.findByText('spider-c3sql-variant')
+  assert.match(card.closest('.archive-run-select').textContent, /Variant/)
+  assert.match(card.closest('.archive-run-select').textContent, /c3sql_generate→FINSQLGenerator/)
 })

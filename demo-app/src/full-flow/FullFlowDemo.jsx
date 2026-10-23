@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { detectLocale, setDocumentLocale, translate } from '../i18n/index.js'
 import BoardWorkspace from './BoardWorkspace.jsx'
 import ConfigurationStudio from './ConfigurationStudio.jsx'
@@ -9,12 +9,11 @@ import QueryWorkspace from './QueryWorkspace.jsx'
 import {
   DATABASES,
   METHODS,
-  ensureConnection,
+  buildReadyKeys,
+  configKey,
   resolveFocusedConfig,
-  selectGridLine,
   selectedDatabasesFromConnections,
   selectedMethodsFromConnections,
-  toggleConnection,
   withConnectionKeys,
 } from './model.js'
 import { EXPERIMENT_SECTIONS, PROCESS_STEPS, resolveProcessStep, resolveSection } from './processSteps.js'
@@ -22,7 +21,14 @@ import { INITIAL_RUN_STATE } from './RunWorkspace.jsx'
 import { displayNamesFor } from './resultsModel.js'
 import { normalizeProposal, pageContextFor } from '../agentActions.js'
 import { FlowStatus } from './flowUi.jsx'
-import { addVariant, removeVariant } from './variantModel.js'
+import {
+  connectionsOf,
+  initialPlan,
+  planReducer,
+  planSummary,
+  templateFromExperiment,
+  variantsOf,
+} from './experimentPlan.js'
 import { agentEnabledIn } from '../runtimeMode.js'
 import './full-flow.css'
 import './agent-shell.css'
@@ -31,22 +37,39 @@ import './ui-enhancements.css'
 const AgentHarness = lazy(() => import('../AgentHarness.jsx'))
 const DRAFT_STORAGE_KEY = 'squrve-demo-draft'
 
+// The plan's starting point: the saved draft, else one default connection.
+function initialPlanState(configs) {
+  const draft = loadDraft()
+  return planReducer(initialPlan(), {
+    type: 'hydrate',
+    connections: draft ? draft.connections : [{ method: METHODS[0], database: DATABASES[0] }],
+    sampling: draft?.sampling,
+    variants: draft?.variants || [],
+    configs,
+  })
+}
+
 // The unsent plan (combinations and variants) survives a reload. A missing or unreadable draft means none.
 function loadDraft() {
   try {
     const draft = JSON.parse(window.localStorage.getItem(DRAFT_STORAGE_KEY) || 'null')
-    if (!draft || !Array.isArray(draft.connections) || !draft.connections.length) return null
-    return { connections: draft.connections, variants: Array.isArray(draft.variants) ? draft.variants : [] }
+    if (!draft || !Array.isArray(draft.connections)) return null
+    return {
+      connections: draft.connections,
+      variants: Array.isArray(draft.variants) ? draft.variants : [],
+      sampling: draft.sampling || null,
+    }
   } catch {
     return null
   }
 }
 
-function saveDraft(connections, variants) {
+function saveDraft(connections, variants, sampling) {
   try {
     window.localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({
       connections: connections.map(({ method, database }) => ({ method, database })),
       variants,
+      sampling,
     }))
   } catch {
     // Storage can be blocked; the page works without a draft.
@@ -67,7 +90,7 @@ const MemoEvidenceHub = memo(EvidenceHub)
 
 function loadShellLayout() {
   try {
-    const saved = JSON.parse(window.localStorage.getItem(SPLIT_STORAGE_KEY) || '{}')
+    const saved = JSON.parse(window.localStorage.getItem(SPLIT_STORAGE_KEY) || '{}') || {}
     return {
       dashboardWidth: Math.min(75, Math.max(35, Number(saved.dashboardWidth) || 62)),
       dashboardCollapsed: Boolean(saved.dashboardCollapsed),
@@ -90,33 +113,62 @@ export default function FullFlowDemo({
   const configs = capabilities?.reproduce_configs || []
   // A showcase deployment turns the Agent off on the server; the page then has no Agent pane.
   const agentEnabled = agentEnabledIn(capabilities)
-  const [locale, setLocale] = useState(() => detectLocale(window.localStorage.getItem('squrve-demo-locale')))
+  const [locale, setLocale] = useState(() => {
+    try { return detectLocale(window.localStorage.getItem('squrve-demo-locale')) } catch { return detectLocale(null) }
+  })
   const [activeStep, setActiveStep] = useState(() => resolveProcessStep(window.location.hash))
   // Which part of the experiment page to bring into view; the counter re-scrolls on repeat clicks.
   const [sectionRequest, setSectionRequest] = useState(() => ({
     section: resolveSection(window.location.hash),
     id: 0,
   }))
-  const [selectedConnections, setSelectedConnections] = useState(() => (
-    loadDraft()?.connections || [{ method: METHODS[0], database: DATABASES[0] }]
-  ))
-  const connectionsRef = useRef(selectedConnections)
+  // The experiment plan is one reducer state; connections and variants are read from it.
+  const [plan, dispatchPlan] = useReducer(planReducer, configs, initialPlanState)
+  const planRef = useRef(plan)
+  const applyPlan = useCallback(action => {
+    // Read and write the ref synchronously, so rapid clicks see each other's result.
+    const next = planReducer(planRef.current, action)
+    planRef.current = next
+    dispatchPlan(action)
+    return next
+  }, [])
+  const selectedConnections = useMemo(() => connectionsOf(plan).map(({ method, database }) => ({ method, database })), [plan])
+  const variants = useMemo(() => variantsOf(plan), [plan])
+  // Pairs a run can start from: a config exists and its benchmark is installed.
+  const runnableCells = useMemo(() => {
+    const ready = buildReadyKeys(configs)
+    const missing = new Set(configs.filter(item => item.installed === false).map(item => configKey(item.method, item.dataset)))
+    const cells = new Set()
+    for (const method of METHODS) {
+      for (const database of DATABASES) {
+        const key = configKey(method, database)
+        if (ready.has(key) && !missing.has(key)) cells.add(`${method}/${database}`)
+      }
+    }
+    return cells
+  }, [configs])
   const [focusedMethod, setFocusedMethod] = useState(METHODS[0])
   const [focusedDatabase, setFocusedDatabase] = useState(DATABASES[0])
-  const [sampleLimit, setSampleLimit] = useState(20)
-  const [sampleMode, setSampleMode] = useState('slice')
-  const [sampleSeed, setSampleSeed] = useState(42)
+  const { limit: sampleLimit, mode: sampleMode, seed: sampleSeed } = plan.sampling
+  const setSamplingField = useCallback((name, value) => {
+    applyPlan({ type: 'setSampling', sampling: { ...planRef.current.sampling, [name]: value } })
+  }, [applyPlan])
+  const setSampleLimit = useCallback(value => setSamplingField('limit', value), [setSamplingField])
+  const setSampleMode = useCallback(value => setSamplingField('mode', value), [setSamplingField])
+  const setSampleSeed = useCallback(value => setSamplingField('seed', value), [setSamplingField])
   const [runState, setRunState] = useState(INITIAL_RUN_STATE)
-  const [experimentId, setExperimentId] = useState('')
+  const experimentId = plan.experimentId || ''
+  const setExperimentId = useCallback(id => applyPlan({ type: 'openExperiment', experimentId: id }), [applyPlan])
+  const onExperimentSnapshot = useCallback((experiment, adopt = false) => applyPlan({ type: 'experimentReceived', experiment, adopt }), [applyPlan])
+  const onSubmission = useCallback(action => applyPlan(action), [applyPlan])
   const [queryPrefill, setQueryPrefill] = useState(null)
   const [adoptedExperimentId, setAdoptedExperimentId] = useState('')
+  const [comparisonRequest, setComparisonRequest] = useState(0)
   const [chatKey, setChatKey] = useState(0)
   const [harnessTask, setHarnessTask] = useState(null)
   const [shellLayout, setShellLayout] = useState(loadShellLayout)
   const [mobilePane, setMobilePane] = useState('dashboard')
   const [adoptedSql, setAdoptedSql] = useState(null)
-  // Actor-swap variants built in Compose; each runs as its own experiment cell.
-  const [variants, setVariants] = useState(() => loadDraft()?.variants || [])
   const splitRef = useRef(null)
   const shellRef = useRef(null)
   const dividerGhostRef = useRef(null)
@@ -140,17 +192,35 @@ export default function FullFlowDemo({
   )
 
   useEffect(() => {
-    window.localStorage.setItem('squrve-demo-locale', locale)
+    try { window.localStorage.setItem('squrve-demo-locale', locale) } catch { /* Storage is optional. */ }
     setDocumentLocale(locale)
   }, [locale])
 
   useEffect(() => {
-    window.localStorage.setItem(SPLIT_STORAGE_KEY, JSON.stringify(shellLayout))
+    try { window.localStorage.setItem(SPLIT_STORAGE_KEY, JSON.stringify(shellLayout)) } catch { /* Storage is optional. */ }
   }, [shellLayout])
 
+  // A reload must not lose a run that is still going: adopt the newest live experiment.
   useEffect(() => {
-    saveDraft(selectedConnections, variants)
-  }, [selectedConnections, variants])
+    if (!api || capabilities?.deployment?.features?.live_evaluation === false) return undefined
+    let active = true
+    api('/api/experiments')
+      .then(data => {
+        if (!active) return
+        const history = data?.experiments || []
+        const live = history.find(item => item.status === 'running' || item.status === 'queued') || history[0]
+        if (live) {
+          onExperimentSnapshot(live, true)
+          setAdoptedExperimentId(live.experiment_id)
+        }
+      })
+      .catch(() => {})
+    return () => { active = false }
+  }, [api, capabilities?.deployment?.features?.live_evaluation, onExperimentSnapshot])
+
+  useEffect(() => {
+    saveDraft(selectedConnections, variants, { limit: sampleLimit, mode: sampleMode, seed: sampleSeed })
+  }, [selectedConnections, variants, sampleLimit, sampleMode, sampleSeed])
 
   useEffect(() => {
     const syncFromHash = () => {
@@ -158,7 +228,8 @@ export default function FullFlowDemo({
       setSectionRequest(current => ({ section: resolveSection(window.location.hash), id: current.id + 1 }))
     }
     window.addEventListener('hashchange', syncFromHash)
-    return () => window.removeEventListener('hashchange', syncFromHash)
+    window.addEventListener('popstate', syncFromHash)
+    return () => { window.removeEventListener('hashchange', syncFromHash); window.removeEventListener('popstate', syncFromHash) }
   }, [])
 
   useEffect(() => {
@@ -177,13 +248,14 @@ export default function FullFlowDemo({
 
   // Accepts a step or an experiment section (compose, board, evidence).
   const navigateToStep = useCallback(target => {
+    if (target === 'board' && !planRef.current.cells.length) target = 'compose'
     const next = resolveProcessStep(target)
     const section = resolveSection(target)
     setActiveStep(next)
     setSectionRequest(current => ({ section, id: current.id + 1 }))
     const hash = `#${section || next}`
     if (window.location.hash !== hash) {
-      window.history.replaceState(null, '', hash)
+      window.history.pushState(null, '', hash)
     }
   }, [])
 
@@ -199,45 +271,63 @@ export default function FullFlowDemo({
     const byMethod = next.find(item => item.method === preferredMethod)
     const byDatabase = next.find(item => item.database === preferredDatabase)
     const target = preferred || byMethod || byDatabase || next[0]
-    applyFocus(target.method, target.database)
+    if (target) applyFocus(target.method, target.database)
   }, [focusedMethod, focusedDatabase, applyFocus])
 
   // Wiring clicks can arrive faster than React commits the previous one, so the
   // ref — not the rendered state — is the authoritative list. Deriving the next
   // list from a stale render dropped the earlier pair, which made a method look
   // like it could only ever hold a single database.
-  const commitConnections = useCallback(next => {
-    connectionsRef.current = next
-    setSelectedConnections(next)
-    return next
-  }, [])
 
   const onToggleConnection = useCallback((method, database) => {
-    const next = commitConnections(toggleConnection(connectionsRef.current, method, database))
+    const next = connectionsOf(applyPlan({ type: 'toggleCell', method, dataset: database, runnable: runnableCells }))
     if (next.some(item => item.method === method && item.database === database)) {
       applyFocus(method, database)
       return
     }
     syncFocus(next)
-  }, [commitConnections, applyFocus, syncFocus])
+  }, [applyPlan, applyFocus, syncFocus, runnableCells])
 
   const onSelectGridLine = useCallback(line => {
-    syncFocus(commitConnections(selectGridLine(connectionsRef.current, configs, line)))
-  }, [commitConnections, syncFocus, configs])
+    const next = connectionsOf(applyPlan({
+      type: 'selectLine',
+      method: line.method,
+      dataset: line.database,
+      runnable: runnableCells,
+    }))
+    syncFocus(next)
+  }, [applyPlan, runnableCells, syncFocus])
 
   const onFocusConnection = useCallback((method, database) => {
-    commitConnections(ensureConnection(connectionsRef.current, method, database))
+    applyPlan({ type: 'ensureCell', method, dataset: database })
     applyFocus(method, database)
-  }, [commitConnections, applyFocus])
+  }, [applyPlan, applyFocus])
 
   // Replay one question from the per-question diff in Query, with the method's
   // workflow focused so the query runs the same actors as the recorded run.
   const onAddVariant = useCallback((config, stages) => {
-    setVariants(current => addVariant(current, config, stages))
-  }, [])
+    applyPlan({ type: 'addVariant', config, stages })
+  }, [applyPlan])
   const onRemoveVariant = useCallback(identity => {
-    setVariants(current => removeVariant(current, identity))
-  }, [])
+    applyPlan({ type: 'removeVariant', identity })
+  }, [applyPlan])
+
+  // A past experiment becomes the plan to edit: its pairs, variants and sampling.
+  const useExperimentAsTemplate = useCallback(experiment => {
+    const template = templateFromExperiment(experiment)
+    const names = cell => displayNamesFor(cell.method, cell.database || cell.dataset)
+    const next = applyPlan({ type: 'hydrate',
+      connections: template.connections.map(cell => ({ method: names(cell)?.method || cell.method, database: names(cell)?.database || cell.database })),
+      variants: template.variants.map(cell => ({ ...cell, method: names(cell)?.method || cell.method, dataset: names(cell)?.database || cell.dataset })),
+      sampling: template.sampling,
+      configs,
+    })
+    const restoredConnections = connectionsOf(next)
+    if (restoredConnections.length) syncFocus(restoredConnections)
+    else if (next.cells[0]) applyFocus(next.cells[0].method, next.cells[0].dataset)
+    setAdoptedExperimentId('')
+    navigateToStep('compose')
+  }, [applyPlan, navigateToStep, configs, syncFocus, applyFocus])
 
   const replayInQuery = useCallback(({ method, stages, dataset, db_id: dbId, question }) => {
     const names = displayNamesFor(method, dataset)
@@ -347,19 +437,32 @@ export default function FullFlowDemo({
       <div className="experiment-section" data-section="compose">
       <MemoExperimentGrid
         api={api}
+        refreshKey={`${experimentId}:${plan.snapshot?.status || ''}:${activeStep}:${sectionRequest.section}`}
         configs={configs}
         connections={connections}
         sampleLimit={sampleLimit}
         sampleMode={sampleMode}
         sampleSeed={sampleSeed}
+        variants={variants}
+        readOnly={capabilities?.deployment?.features?.live_evaluation === false}
+        credentialConfigured={sqlAuth?.configured}
+        onConfigureSql={onConfigureSql}
+        onSelectAll={() => applyPlan({ type: 'selectAll', runnable: runnableCells })}
+        onClear={() => applyPlan({ type: 'clear' })}
+        onRemoveVariant={onRemoveVariant}
+        onSampleLimitChange={setSampleLimit}
+        onSampleModeChange={setSampleMode}
+        onSampleSeedChange={setSampleSeed}
         onToggleConnection={onToggleConnection}
         onSelectLine={onSelectGridLine}
         onFocusConnection={onFocusConnection}
+        onGoToRun={() => navigateToStep('board')}
         focusedMethod={focusedMethod}
         focusedDatabase={focusedDatabase}
         t={t}
       />
       <MemoConnectionComposer
+        readOnly={capabilities?.deployment?.features?.live_evaluation === false}
         selectedConnections={connections}
         focusedMethod={focusedMethod}
         focusedDatabase={focusedDatabase}
@@ -391,9 +494,20 @@ export default function FullFlowDemo({
         postJson={postJson}
         api={api}
         onRunStateChange={onRunStateChange}
+        plan={plan}
+        credentialConfigured={sqlAuth?.configured}
+        onConfigureSql={onConfigureSql}
+        onSubmission={onSubmission}
+        onExperimentSnapshot={onExperimentSnapshot}
+        onEditPlan={() => navigateToStep('compose')}
+        onViewComparison={id => {
+          if (id !== planRef.current.experimentId) setExperimentId(id)
+          setComparisonRequest(value => value + 1)
+          navigateToStep('evidence')
+        }}
         onExperimentChange={setExperimentId}
         adoptExperimentId={adoptedExperimentId}
-        liveEvaluation={Boolean(capabilities?.deployment?.features?.live_evaluation)}
+        liveEvaluation={capabilities?.deployment?.features?.live_evaluation !== false}
         variants={variants}
         t={t}
       />
@@ -401,10 +515,14 @@ export default function FullFlowDemo({
       <div className="experiment-section" data-section="evidence">
       <MemoEvidenceHub
         pageId="evidence"
+        comparisonRequest={comparisonRequest}
+        refreshKey={plan.snapshot?.status}
         capabilities={capabilities}
         api={api}
+        onOpenExperiment={id => { setExperimentId(id); setAdoptedExperimentId(id) }}
+        onUseTemplate={useExperimentAsTemplate}
         postJson={postJson}
-        liveEvaluation={Boolean(capabilities?.deployment?.features?.live_evaluation)}
+        liveEvaluation={capabilities?.deployment?.features?.live_evaluation !== false}
         focusedConfig={focusedConfig}
         selectedMethods={selectedMethods}
         sampleLimit={sampleLimit}
@@ -439,6 +557,10 @@ export default function FullFlowDemo({
       />
     ),
   }
+
+  // The Experiment tab says where the plan is: being run, finished, or failed.
+  const planStatusLabel = t(`plan.status.${plan.status}`)
+
 
   const nextLocale = locale === 'zh-CN' ? 'en-US' : 'zh-CN'
   const languageLabel = locale === 'zh-CN'
@@ -581,6 +703,7 @@ export default function FullFlowDemo({
                   onClick={() => navigateToStep(step)}
                 >
                   {t(`process.${step}`)}
+                  {step === 'experiment' && planStatusLabel ? <small className="agent-stage-status" data-testid="experiment-status">{planStatusLabel}</small> : null}
                 </button>
               ))}
             </nav>
@@ -591,14 +714,17 @@ export default function FullFlowDemo({
             </h2>
             <div className="agent-live-workspace-actions">
               <button type="button" aria-label={t('process.previous')} onClick={() => {
-                const index = PROCESS_STEPS.indexOf(activeStep)
-                if (index > 0) navigateToStep(PROCESS_STEPS[index - 1])
+                const steps = ['configure', ...EXPERIMENT_SECTIONS, 'query']
+                const index = steps.indexOf(activeStep === 'experiment' ? sectionRequest.section || 'compose' : activeStep)
+                if (index > 0) navigateToStep(steps[index - 1])
               }}>
                 ‹
               </button>
               <button type="button" aria-label={t('process.next')} onClick={() => {
-                const index = PROCESS_STEPS.indexOf(activeStep)
-                if (index < PROCESS_STEPS.length - 1) navigateToStep(PROCESS_STEPS[index + 1])
+                const steps = ['configure', ...EXPERIMENT_SECTIONS, 'query']
+                const index = steps.indexOf(activeStep === 'experiment' ? sectionRequest.section || 'compose' : activeStep)
+                const next = steps[index + 1]
+                if (next) navigateToStep(next === 'board' && !planSummary(plan).cells ? 'compose' : next)
               }}>
                 ›
               </button>

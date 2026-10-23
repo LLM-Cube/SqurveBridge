@@ -170,8 +170,16 @@ class ExperimentScheduler:
         with self._lock:
             experiment = self._find(experiment_id)
             cell = self._cell(experiment, cell_id)
-            if cell.status not in {"failed", "cancelled"} or not cell.job_id:
-                raise ExperimentConflict("Only a failed or cancelled cell that has started can be resumed.")
+            if cell.status not in {"failed", "cancelled"}:
+                raise ExperimentConflict("Only a failed or cancelled cell can be resumed.")
+            if not cell.job_id:
+                # A cancelled queued cell has no checkpoint; return it to the
+                # same experiment's queue with its original sampling and Actors.
+                experiment.cancelled = False
+                cell.error_code = None
+                self._set_status(experiment, cell, "queued")
+                self.tick()
+                return self._snapshot(experiment)
             self.tick()
             active = sum(
                 1 for item in self._experiments.values()

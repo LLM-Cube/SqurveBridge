@@ -428,6 +428,11 @@ export default function Archive({
                     >
                       <div className="archive-run-head">
                         <b>{run.method || 'unknown'} / {run.dataset || 'unknown'}</b>
+                        {run.stages && Object.keys(run.stages).length ? (
+                          <small className="archive-run-variant">
+                            {label('archive.variant', 'Variant')} · {Object.entries(run.stages).map(([stage, actor]) => `${stage}→${actor}`).join(', ')}
+                          </small>
+                        ) : null}
                         <strong className="archive-run-ex">{percent(ex)}</strong>
                       </div>
                       <small className="archive-run-id">{run.run_id}</small>
