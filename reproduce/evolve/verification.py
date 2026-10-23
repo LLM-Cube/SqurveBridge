@@ -63,9 +63,16 @@ def freeze_policy(root: Path, policy: dict) -> dict:
     return policy
 
 
+def metric_key(scores: dict, metric: str) -> str:
+    if scores.get("schema_version") != 2:
+        return metric
+    execution = "ex_selected" if scores.get("candidate_protocol") == "observed-final-candidate@1" else "ex_at_1"
+    return {"ex": execution, "em": "structural_match"}.get(metric, metric)
+
+
 def sample_map(scores: dict, metric: str) -> dict:
     if scores.get("schema_version", 1) == 2:
-        metric = {"ex": "ex_at_1", "em": "structural_match"}.get(metric, metric)
+        metric = metric_key(scores, metric)
         return {str(row["instance_id"]): (row.get("metrics", {}).get(metric) or {}).get("value")
                 for row in scores.get("samples", [])
                 if (row.get("metrics", {}).get(metric) or {}).get("status") == "available"}
@@ -74,7 +81,7 @@ def sample_map(scores: dict, metric: str) -> dict:
 
 
 def metric_value(scores: dict, metric: str, tolerance: float) -> tuple[float | None, str | None]:
-    name = {"ex": "ex_at_1", "em": "structural_match"}.get(metric, metric) if scores.get("schema_version") == 2 else metric
+    name = metric_key(scores, metric)
     item = (scores.get("aggregate") or {}).get(name)
     value = item.get("value") if isinstance(item, dict) and scores.get("schema_version") == 2 else item.get("avg") if isinstance(item, dict) else item
     if not finite(value):

@@ -39,7 +39,8 @@ def apply_action(repo_root: str | Path, action: Action, *, allow_scope_c: bool =
 
 def score_from_scores(scores: dict, metric_path: str) -> float | None:
     if scores.get("schema_version") == 2:
-        metric_path = {"ex": "ex_at_1", "em": "structural_match"}.get(metric_path, metric_path)
+        from reproduce.evolve.verification import metric_key
+        metric_path = metric_key(scores, metric_path)
         item = scores.get("aggregate", {}).get(metric_path)
         return item.get("value") if isinstance(item, dict) and item.get("status") == "available" else None
     if metric_path in {"ex", "em", "sf1", "sc", "ves"}:

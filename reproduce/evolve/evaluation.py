@@ -43,6 +43,17 @@ def runtime_latency(runtime: dict) -> float | None:
     return sum(event["duration_ns"] for event in ends) / len(samples) / 1e9
 
 
+def final_candidate_bundle(bundle: dict) -> dict:
+    # A final-output checkpoint cannot claim the first generated candidate or
+    # the oracle over the complete runtime pool. Keep only supported scopes.
+    bundle['candidate_protocol'] = 'observed-final-candidate@1'
+    for metric in ('ex_at_1', 'observed_oracle_at_k'):
+        bundle['aggregate'].pop(metric, None)
+        for sample in bundle['samples']:
+            sample['metrics'].pop(metric, None)
+    return bundle
+
+
 def build_evaluation(scores: dict, dataset, directory: Path, config: dict) -> dict | None:
     collection = json.loads(os.environ.get('SQURVE_EVO_COLLECTION', '{}'))
     if not collection.get('capture_sql') or not collection.get('capture_outputs'):
@@ -73,7 +84,16 @@ def build_evaluation(scores: dict, dataset, directory: Path, config: dict) -> di
             shutil.copyfile(source, snapshot)
         sample_ref = hashlib.sha256(str(row.get('index', index)).encode()).hexdigest()
         matching = [event for event in candidates if event.get('sql_text') == row.get('pred_sql') and starts.get(event.get('producer_span_id') or event.get('parent_span_id')) == sample_ref]
-        candidate_id = matching[-1]['candidate_occurrence_id'] if matching else 'unobserved-' + str(index)
+        explicit = [event.get('selected_candidate_id') for event in runtime['events']
+                    if event['type'] == 'selector.decision' and event.get('selection_identity') == 'explicit'
+                    and starts.get(event.get('parent_span_id')) == sample_ref]
+        choices = [event for event in matching if event['candidate_occurrence_id'] in explicit]
+        if len(matching) == 1:
+            candidate_id = matching[0]['candidate_occurrence_id']
+        elif len(choices) == 1:
+            candidate_id = choices[0]['candidate_occurrence_id']
+        else:
+            candidate_id = 'unobserved-or-ambiguous-' + str(index)
         raw['samples'].append({
             'instance_id': str(row['instance_id']), 'db_path': str(snapshot.resolve()),
             'gold_sql': row.get('gold_sql'), 'candidates': [{'candidate_id': candidate_id, 'occurrence_id': candidate_id, 'sql': row.get('pred_sql') or ''}],
@@ -86,6 +106,7 @@ def build_evaluation(scores: dict, dataset, directory: Path, config: dict) -> di
     # These SQL executions are explicitly evaluation-only and occur outside the
     # EvidenceRun context. Their provenance cannot be confused with the method.
     bundle = evaluate_checkpoint(target / 'checkpoint.json', evaluation_config).model_dump(mode='json')
+    bundle = final_candidate_bundle(bundle)
     bundle['provenance']['runtime_actor_latency_s'] = runtime_latency(runtime)
     write_json(target / 'scores.json', bundle)
     return bundle
@@ -131,6 +152,7 @@ def verify_evaluation(directory: Path, scores: dict, runtime: dict) -> list[str]
             write_json(relocated, checkpoint)
             recomputed = evaluate_checkpoint(relocated, config, executor=SavedExecutor()).model_dump(mode='json')
         # The checkpoint location is provenance, not a measurement identity.
+        recomputed = final_candidate_bundle(recomputed)
         recomputed['provenance']['runtime_actor_latency_s'] = runtime_latency(runtime)
         recomputed['provenance']['checkpoint'] = saved['provenance']['checkpoint']
         if recomputed != saved:

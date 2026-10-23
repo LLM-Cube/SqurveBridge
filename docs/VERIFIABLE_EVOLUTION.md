@@ -73,7 +73,7 @@ SQL, questions, provider content, secrets or private paths.
 
 Offline analysis is clearly separate from runtime: after the method finishes,
 the evaluator uses its observed final candidate per sample and retained SQLite
-snapshot to produce a typed v2 evaluation bundle. The selected-final protocol,
+snapshot to produce a typed v2 evaluation bundle. First-generation and oracle-over-pool metrics are not claimed by this final-output checkpoint. Ambiguous identical-SQL occurrences require an explicit selection identity or fail acceptance. The selected-final protocol,
 model config, database contents, sample IDs and evaluator identity must match
 between baseline and candidate. Every evaluated candidate must resolve to the
 observed candidate occurrence and Actor sample span. Equal SQL from independent
