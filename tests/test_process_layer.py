@@ -82,7 +82,8 @@ class KernelTests(unittest.TestCase):
     def test_refinement_outcome(self):
         self.assertTrue(refinement_outcome(0, 1)["fix_success"])
         self.assertTrue(refinement_outcome(1, 0)["degradation"])
-        self.assertFalse(refinement_outcome(None, 1)["fix_success"])
+        self.assertIsNone(refinement_outcome(None, 1)["fix_success"])
+        self.assertIsNone(refinement_outcome(1, None)["degradation"])
 
 
 class GateFunnelTests(unittest.TestCase):

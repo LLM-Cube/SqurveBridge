@@ -134,8 +134,8 @@ def refinement_outcome(ex_before: Optional[int], ex_after: Optional[int]) -> Dic
     return {
         "ex_before": ex_before,
         "ex_after": ex_after,
-        "fix_success": ex_before == 0 and ex_after == 1,
-        "degradation": ex_before == 1 and ex_after == 0,
+        "fix_success": (ex_before == 0 and ex_after == 1) if ex_before in (0, 1) and ex_after in (0, 1) else None,
+        "degradation": (ex_before == 1 and ex_after == 0) if ex_before in (0, 1) and ex_after in (0, 1) else None,
     }
 
 
