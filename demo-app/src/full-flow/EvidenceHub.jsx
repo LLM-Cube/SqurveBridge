@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useReducer, useState } from 'react'
 import Archive from '../Archive.jsx'
 import ExperimentBoard from '../ExperimentBoard.jsx'
 import ExperimentHistory from './ExperimentHistory.jsx'
 import { FlowEmpty, FlowPageHeading, FlowStatus } from './flowUi.jsx'
+import { comparisonReducer, initialComparison } from './comparisonSet.js'
 import ResultsMatrix from './ResultsMatrix.jsx'
 
 export default function EvidenceHub({
@@ -28,6 +29,7 @@ export default function EvidenceHub({
   onReplay,
   t,
 }) {
+  const [comparisonState, onComparisonAction] = useReducer(comparisonReducer, undefined, initialComparison)
   const [view, setView] = useState('current')
   const [historySource, setHistorySource] = useState(liveEvaluation ? 'experiments' : 'recorded')
   const [owningExperimentId, setOwningExperimentId] = useState('')
@@ -136,6 +138,8 @@ export default function EvidenceHub({
           </div>
           {view === 'current' && liveEvaluation && !experimentId ? <p className="results-note">{t('plan.noCurrentExperiment')}</p> : view === 'history' && historySource === 'experiments' ? null : (
             <ResultsMatrix
+              comparisonState={comparisonState}
+              onComparisonAction={onComparisonAction}
               key={`${view}-${historySource}-${experimentId}`}
               api={api}
               configs={configs}
@@ -193,6 +197,7 @@ export default function EvidenceHub({
                   </button>
                 </header>
                 <ExperimentBoard
+                  t={t}
                   embedded
                   viewOnly
                   capabilities={capabilities}

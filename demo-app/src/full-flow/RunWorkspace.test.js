@@ -526,7 +526,7 @@ test('visualizes completed job score-bundle artifacts in the run monitor', async
 
   const panel = await screen.findByTestId('run-artifact-panel')
   assert.match(panel.textContent, /90\.0%/)
-  assert.match(panel.textContent, /Component F1/)
+  assert.match(panel.textContent, /dashboard.structure/)
   assert.match(panel.textContent, /schema_link/)
   assert.match(panel.textContent, /session:spider-c3sql-job-done\/scores\.json/)
 })

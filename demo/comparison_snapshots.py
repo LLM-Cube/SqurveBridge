@@ -8,6 +8,7 @@ than dropping it, so an old number is never shown as if it were current.
 from __future__ import annotations
 
 import json
+import math
 import re
 import uuid
 from collections.abc import Callable
@@ -34,8 +35,14 @@ def save(root: Path, payload: dict) -> dict:
         raise ValueError("A snapshot names one benchmark.")
     if not isinstance(members, list) or not 1 <= len(members) <= _MAX_MEMBERS:
         raise ValueError(f"A snapshot holds between 1 and {_MAX_MEMBERS} members.")
+    if payload.get("source", "archive") not in {"archive", "experiment", "recorded"}:
+        raise ValueError("Unknown comparison source.")
+    if not isinstance(payload.get("sampling", {}), dict):
+        raise ValueError("Sampling must be an object.")
     clean = []
     for member in members:
+        if not isinstance(member, dict) or not all(isinstance(member.get(key, {}), dict) for key in ("stages", "values", "cost")):
+            raise ValueError("Each member must be an object with a stage mapping.")
         if str(member.get("dataset", benchmark)) != benchmark:
             raise ValueError("Every member must belong to the snapshot's benchmark.")
         clean.append({
@@ -44,12 +51,18 @@ def save(root: Path, payload: dict) -> dict:
             "label": str(member.get("label") or member.get("method") or ""),
             "run_id": str(member.get("run_id") or "") or None,
             "stages": {str(stage): str(actor) for stage, actor in (member.get("stages") or {}).items()},
+            "values": {key: value for key, value in member.get("values", {}).items() if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)},
+            "cost": {key: member.get("cost", {}).get(key) for key in ("tokens_total", "latency_s")},
+            "sample_count": member.get("sample_count"),
+            "sample_hash": member.get("sample_hash"),
+            "scores_hash": member.get("scores_hash"),
         })
     snapshot = {
         "id": uuid.uuid4().hex[:12],
         "name": str(payload.get("name") or f"{benchmark} comparison")[:120],
         "benchmark": benchmark,
         "source": str(payload.get("source") or "archive"),
+        "split": str(payload.get("split") or "dev"),
         "sampling": dict(payload.get("sampling") or {}),
         "saved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "members": clean,
@@ -60,7 +73,7 @@ def save(root: Path, payload: dict) -> dict:
     return snapshot
 
 
-def load(root: Path, snapshot_id: str, run_exists: Callable[[str], bool]) -> dict | None:
+def load(root: Path, snapshot_id: str, run_exists: Callable[[str], bool], resolve_run: Callable | None = None) -> dict | None:
     if not _ID.fullmatch(str(snapshot_id)):
         return None
     path = _folder(root) / f"{snapshot_id}.json"
@@ -69,6 +82,10 @@ def load(root: Path, snapshot_id: str, run_exists: Callable[[str], bool]) -> dic
     snapshot = _read(path)
     for member in snapshot["members"]:
         member["status"] = "ok" if member.get("run_id") and run_exists(member["run_id"]) else "run_missing"
+        if member["status"] == "ok" and resolve_run and member.get("scores_hash"):
+            current = resolve_run(member["run_id"])
+            if not current or current.get("scores_hash") != member["scores_hash"]:
+                member["status"] = "run_changed"
     return snapshot
 
 

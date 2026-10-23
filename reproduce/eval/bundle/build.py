@@ -160,6 +160,7 @@ def build_scores(
 
     result = {
         "run_id": run_id,
+        "ex_variant": "custom",
         "method": method,
         "dataset": dataset_name,
         "split": split,

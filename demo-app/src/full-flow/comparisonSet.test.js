@@ -61,26 +61,27 @@ test('the export names its benchmark and sampling, and leaves uncomputed values 
   const csv = comparisonCsv({
     benchmark: 'Spider',
     source: 'archive',
+    split: 'dev',
     sampling: { limit: 20, mode: 'slice', seed: 42 },
     rows: [
-      { method: 'C3SQL', label: 'C3SQL', values: { ex: 0.8 }, sampleCount: 20, runId: 'run-a' },
-      { method: 'C3SQL.var-1a2b3c', label: 'C3SQL · generate→FINSQLGenerator', values: { ex: null }, sampleCount: null, runId: null },
+      { method: 'C3SQL', label: 'C3SQL', values: { ex: 0.8 }, sampleCount: 20, runId: 'run-a', comparable: true },
+      { method: 'C3SQL.var-1a2b3c', label: 'C3SQL · generate→FINSQLGenerator', values: {}, sampleCount: null, runId: null, comparable: false },
     ],
     metrics: ['ex'],
   })
   assert.equal(csv, [
-    '# benchmark=Spider source=archive limit=20 mode=slice seed=42',
-    'method,label,ex,sample_count,run_id',
-    'C3SQL,C3SQL,0.8,20,run-a',
-    'C3SQL.var-1a2b3c,C3SQL · generate→FINSQLGenerator,,,',
+    '# benchmark=Spider source=archive split=dev limit=20 mode=slice seed=42',
+    'method,label,ex,tokens_total,latency_s,sample_count,run_id,comparable',
+    'C3SQL,C3SQL,0.8,,,20,run-a,yes',
+    'C3SQL.var-1a2b3c,C3SQL · generate→FINSQLGenerator,,,,,,no',
   ].join('\n'))
 })
 
 test('a label with a comma is quoted so the columns stay aligned', () => {
   const csv = comparisonCsv({
-    benchmark: 'Spider', source: 'archive', sampling: { limit: 3, mode: 'slice', seed: 42 },
-    rows: [{ method: 'A', label: 'A, with comma', values: { ex: 1 }, sampleCount: 3, runId: 'r' }],
+    benchmark: 'Spider', source: 'archive', split: 'dev', sampling: { limit: 3, mode: 'slice', seed: 42 },
+    rows: [{ method: 'A', label: 'A, with comma', values: { ex: 1 }, sampleCount: 3, runId: 'r', comparable: true }],
     metrics: ['ex'],
   })
-  assert.equal(csv.split('\n')[2], 'A,"A, with comma",1,3,r')
+  assert.equal(csv.split('\n')[2], 'A,"A, with comma",1,,,3,r,yes')
 })

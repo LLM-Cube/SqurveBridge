@@ -131,3 +131,13 @@ lsof -nP -iTCP:5173 -sTCP:LISTEN
 ## 安全边界
 
 API 默认只监听 `127.0.0.1`。本地 Pi 会话可使用读写和命令工具，因此不应把本地服务暴露到不受信任的网络。Hugging Face 部署自动切换为 `hosted-readonly`，只向 Pi 开放 `read`、`grep`、`find` 和 `ls`。
+
+### Showcase without an Agent runtime
+
+The default `SQURVE_DEMO_AGENT=off` hides Agent chat and rejects its API routes.
+`demo/start.sh` skips the embedded Pi SDK when off; Node is still needed for Vite.
+For a prebuilt frontend, `python -m demo.showcase_server --port 7861` serves both
+UI and API with Python only, forces Agent off and never starts Pi or Node.
+Build the frontend once with `npm ci --prefix demo-app` and
+`npm run build --prefix demo-app`. Set `SQURVE_DEMO_AGENT=on` and use the usual
+development launcher only when explicitly enabling the Agent runtime.

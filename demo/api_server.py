@@ -31,6 +31,7 @@ if str(_project_root) not in sys.path:
 
 from demo import model_catalog
 from demo import comparison_snapshots
+from demo.run_evidence import run_evidence
 from demo.experiments import MAX_CELLS, ExperimentConflict, ExperimentNotFound, ExperimentScheduler
 from demo.variants import VariantError, normalize_stages, runner_overrides, swappable_actors, variant_key, variant_label
 from demo.deployment import deployment_features, deployment_target, route_denial
@@ -1170,11 +1171,15 @@ def _summarize_scores(path: Path) -> dict:
     error_roots.sort(key=lambda item: item.get("count") or 0, reverse=True)
     token = aggregate.get("token") or {}
     return {
+        **run_evidence(data, include_questions=deployment_target() != "hf-space"),
         "run_id": data.get("run_id") or path.parent.name,
         "method": data.get("method"),
         "dataset": data.get("dataset"),
         "split": data.get("split"),
         "scope": data.get("scope"),
+        "sample_hash": _sample_hash(data),
+        "sampling": _sampling_metadata(data),
+        "latency": _latency_summary(data),
         "sample_count": data.get("sample_count"),
         "timestamp": data.get("timestamp"),
         "metrics": metrics,
@@ -1623,6 +1628,9 @@ def _serialize_comparison_run(
     aggregate = _serialize_aggregate_metrics(raw_aggregate)
     workflow = scores.get("workflow_trace") or {}
     serialized = {
+        "ex_variant": run_evidence(scores)["ex_variant"],
+        "process": run_evidence(scores)["process"],
+        "sample_evidence": [{key: value for key, value in row.items() if key != "question"} for row in run_evidence(scores)["sample_evidence"]],
         "run_id": _public_identifier(scores.get("run_id")),
         "method": _public_identifier(scores.get("method")),
         "dataset": _public_identifier(scores.get("dataset")),
@@ -2701,7 +2709,10 @@ def _matrix_cell(method: str, dataset: str, scores: dict | None, source: str | N
             "cost": _run_cost(scores),
             "sample_count": _sanitize_public_scalar(scores.get("sample_count")),
             "sample_hash": _sample_hash(scores),
-            "run_id": _public_identifier(scores.get("run_id")),
+            "ex_variant": run_evidence(scores)["ex_variant"],
+        "process": run_evidence(scores)["process"],
+        "sample_evidence": [{key: value for key, value in row.items() if key != "question"} for row in run_evidence(scores)["sample_evidence"]],
+        "run_id": _public_identifier(scores.get("run_id")),
             "timestamp": _public_timestamp(scores.get("timestamp")),
         })
     return cell
@@ -2728,10 +2739,14 @@ def _scores_variant(scores: dict) -> str:
     return variant_key(str(scores.get("method")), _scores_stages(scores))
 
 
-def _archived_scores(split: str, sampling: dict) -> dict[tuple[str, str], tuple[dict, str]]:
+def _archived_scores(split: str, sampling: dict, source_filter: str | None = None) -> dict[tuple[str, str], tuple[dict, str]]:
     """Latest archived run per (method, dataset) with the requested sampling, and where it came from."""
     latest: dict[tuple[str, str], tuple[dict, str]] = {}
     for source, run_dir in _archive_run_dirs():
+        if source_filter == "recorded" and source != "evidence":
+            continue
+        if source_filter == "archive" and source == "evidence":
+            continue
         scores = _load_run_scores(run_dir)
         if not scores:
             continue
@@ -2800,7 +2815,7 @@ def _results_matrix(args) -> tuple[dict | None, tuple | None]:
 
     cells = []
     labels = {}
-    archived = {} if experiment_id else _archived_scores(split, sampling)
+    archived = {} if experiment_id else _archived_scores(split, sampling, args.get("source"))
     for method in methods:
         for dataset in datasets:
             if experiment_id:
@@ -2939,10 +2954,46 @@ def _public_text(value) -> str | None:
 
 # --- Comparison snapshots -----------------------------------------------------
 
+def _snapshot_run_data(run_id: str) -> dict | None:
+    resolved = _resolve_archive_run(run_id)
+    if not resolved:
+        return None
+    scores = _load_run_scores(resolved[1])
+    if not scores:
+        return None
+    return {
+        "dataset": scores.get("dataset"), "split": scores.get("split"), "sampling": _sampling_metadata(scores),
+        "values": _run_metric_values(scores)[0], "cost": _run_cost(scores),
+        "sample_count": scores.get("sample_count"), "sample_hash": _sample_hash(scores),
+        "scores_hash": hashlib.sha256((resolved[1] / "scores.json").read_bytes()).hexdigest(),
+    }
+
+
 @app.post("/api/comparison-snapshots")
 def create_comparison_snapshot():
     payload = request.get_json(silent=True) or {}
     try:
+        if not isinstance(payload, dict):
+            raise ValueError("A comparison snapshot must be an object.")
+        members = payload.get("members")
+        if isinstance(members, list):
+            hydrated = []
+            for member in members:
+                if not isinstance(member, dict):
+                    raise ValueError("Each comparison member must be an object.")
+                data = _snapshot_run_data(str(member.get("run_id") or ""))
+                if data and (data["dataset"] != payload.get("benchmark") or data["split"] != payload.get("split", "dev")):
+                    raise ValueError("Snapshot members must share benchmark and split.")
+                if data and payload.get("sampling"):
+                    expected = payload["sampling"]
+                    actual = data["sampling"]
+                    if any(expected.get(key) != actual.get(key) for key in ("limit", "mode")) or (expected.get("mode") == "random" and expected.get("seed") != actual.get("seed")):
+                        raise ValueError("Snapshot sampling is not aligned.")
+                hydrated.append({**member, "values": {}, "cost": {}, **(data or {})})
+            hashes = {member.get("sample_hash") for member in hydrated if member.get("scores_hash")}
+            if len(hashes) > 1 or (len(hydrated) > 1 and None in hashes):
+                raise ValueError("Snapshot sample fingerprints are not aligned.")
+            payload = {**payload, "members": hydrated}
         saved = comparison_snapshots.save(workspace_root(), payload)
     except ValueError as exc:
         return _json_error(str(exc))
@@ -2960,6 +3011,7 @@ def comparison_snapshot_detail(snapshot_id: str):
         workspace_root(),
         snapshot_id,
         run_exists=lambda run_id: _resolve_archive_run(run_id) is not None,
+        resolve_run=_snapshot_run_data,
     )
     if snapshot is None:
         return _json_error("Comparison snapshot not found.", 404)
@@ -3018,7 +3070,10 @@ def results_diff():
 
     def side(scores: dict) -> dict:
         return {
-            "run_id": _public_identifier(scores.get("run_id")),
+            "ex_variant": run_evidence(scores)["ex_variant"],
+        "process": run_evidence(scores)["process"],
+        "sample_evidence": [{key: value for key, value in row.items() if key != "question"} for row in run_evidence(scores)["sample_evidence"]],
+        "run_id": _public_identifier(scores.get("run_id")),
             "method": _public_identifier(scores.get("method")),
             "variant": _public_identifier(_scores_variant(scores)),
             "label": _public_text(variant_label(str(scores.get("method")), _scores_stages(scores))),
@@ -3155,6 +3210,7 @@ def _archive_entry(source: str, run_dir: Path) -> dict | None:
     sampling = _sampling_metadata(scores)
     return {
         "run_id": run_id,
+        **run_evidence(scores, include_questions=deployment_target() != "hf-space"),
         "dir_name": run_dir.name if source in {"artifacts", "evidence"} else run_dir.parent.name,
         "source": source,
         "dataset": scores.get("dataset"),

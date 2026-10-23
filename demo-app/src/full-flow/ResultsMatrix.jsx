@@ -124,6 +124,8 @@ export default function ResultsMatrix({
   connections = [],
   experimentId = '',
   fixedSource,
+  comparisonState,
+  onComparisonAction,
   sampleLimit = 20,
   sampleMode = 'slice',
   sampleSeed = 42,
@@ -143,6 +145,8 @@ export default function ResultsMatrix({
   const [matrix, setMatrix] = useState(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  // A pair the user chose in the benchmark comparison, to open in the question diff.
+  const [diffPair, setDiffPair] = useState(null)
   // An experiment's columns are its own cells, variants included.
   const [cellAxes, setCellAxes] = useState(null)
 
@@ -174,6 +178,7 @@ export default function ResultsMatrix({
     ...(source === 'experiment' && experimentId
       ? { experiment_id: experimentId }
       : {
+        source,
         sample_limit: effectiveSampling.limit,
         sample_mode: effectiveSampling.mode,
         sample_seed: effectiveSampling.seed,
@@ -284,8 +289,20 @@ export default function ResultsMatrix({
             metricLabel={metrics.find(item => item.id === activeMetric)?.label || activeMetric}
             t={t}
           />
-          <DiffPanel api={api} matrix={matrix} onReplay={onReplay} t={t} />
-          <ComparisonPanel matrix={matrix} source={source} liveEvaluation={liveEvaluation} postJson={postJson} t={t} />
+          <ComparisonPanel
+            allMethods={allMethods}
+            comparisonState={comparisonState}
+            onComparisonAction={onComparisonAction}
+            matrix={matrix}
+            source={source}
+            liveEvaluation={liveEvaluation}
+            api={api}
+            postJson={postJson}
+            onOpenRun={onOpenRun}
+            onCompareDiff={(a, b) => setDiffPair({ a, b, stamp: Date.now() })}
+            t={t}
+          />
+          <DiffPanel api={api} matrix={matrix} onReplay={onReplay} pair={diffPair} t={t} />
         </>
       )}
     </section>

@@ -63,7 +63,7 @@ export function heatmapRows(matrix, metricId) {
         status: 'ok',
         value,
         step: Math.min(HEAT_STEPS - 1, Math.floor(ratio * HEAT_STEPS)),
-        text: formatValue(value, scale),
+        text: formatValue(value, scale) + (metricId === 'ex' ? ` · ${cell?.ex_variant || 'custom'}` : ''),
         tooltip: [labelOf(matrix, method), dataset, formatValue(value, scale), cell.sample_count ? `n=${cell.sample_count}` : '']
           .filter(Boolean).join(' · '),
         runId: cell.run_id || null,
@@ -97,7 +97,7 @@ export function groupedBars(matrix, metricId, allMethods) {
           method,
           label: labelOf(matrix, method),
           value,
-          text: formatValue(value, scale),
+          text: formatValue(value, scale) + (metricId === 'ex' ? ` · ${cell?.ex_variant || 'custom'}` : ''),
           slot: seriesSlot(method, allMethods),
         })
       }
@@ -111,7 +111,7 @@ export function costScatter(matrix, metricId, costKey) {
   const points = []
   const omitted = []
   for (const cell of matrix?.cells || []) {
-    const label = `${labelOf(matrix, cell.method)} · ${cell.dataset}`
+    const label = `${labelOf(matrix, cell.method)} · ${cell.dataset}${metricId === 'ex' ? ` · EX ${cell.ex_variant || 'custom'}` : ''}`
     const y = comparableValue(cell, metricId)
     const x = cell?.cost?.[costKey]
     if (y === null || typeof x !== 'number' || !Number.isFinite(x)) {

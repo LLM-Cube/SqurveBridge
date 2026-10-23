@@ -1,3 +1,4 @@
+import RunMetrics from './RunMetrics.jsx'
 import { useEffect, useMemo, useState } from 'react'
 
 const METRIC_KEYS = ['ex', 'em', 'sf1', 'ves', 'rves']
@@ -65,45 +66,8 @@ function renderMarkdown(text) {
   return blocks
 }
 
-function MetricBoard({ metrics, label, primaryKey = 'ex' }) {
-  const cards = METRIC_KEYS.map(key => ({
-    key,
-    short: key.toUpperCase(),
-    name: label(`archive.metric.${key}`, key.toUpperCase()),
-    hint: label(`archive.metricHint.${key}`, ''),
-    value: metricValue(metrics, key),
-  }))
-  const primary = cards.find(item => item.key === primaryKey) || cards[0]
-  const others = cards.filter(item => item.key !== primary?.key)
-
-  return (
-    <div className="archive-metric-board" data-testid="archive-metric-board">
-      <div className="archive-metric-hero">
-        <div>
-          <span>{primary?.name || 'Execution accuracy'}</span>
-          <strong>{percent(primary?.value)}</strong>
-          {primary?.hint ? <small>{primary.hint}</small> : null}
-        </div>
-        <div className="archive-metric-hero-track" aria-hidden="true">
-          <i style={{ width: `${barWidth(primary?.value)}%` }} />
-        </div>
-      </div>
-      <ul className="archive-metric-bars">
-        {others.map(card => (
-          <li key={card.key}>
-            <div className="archive-metric-bar-label">
-              <strong>{card.short}</strong>
-              <span>{card.name}</span>
-            </div>
-            <div className="archive-metric-bar-track" aria-hidden="true">
-              <i style={{ width: `${barWidth(card.value)}%` }} />
-            </div>
-            <b>{percent(card.value)}</b>
-          </li>
-        ))}
-      </ul>
-    </div>
-  )
+function MetricBoard({ metrics, label, data }) {
+  return <div data-testid="archive-metric-board"><RunMetrics data={data || { metrics }} t={label} /></div>
 }
 
 function ScoresOverview({ data, label }) {
@@ -114,7 +78,7 @@ function ScoresOverview({ data, label }) {
 
   return (
     <div className="archive-scores-overview" data-testid="archive-scores-overview">
-      <MetricBoard metrics={metrics} label={label} />
+      <MetricBoard metrics={metrics} data={data} label={label} />
       <dl className="archive-fact-grid">
         <div>
           <dt>{label('archive.samples', 'Samples')}</dt>
@@ -497,7 +461,7 @@ export default function Archive({
                     </div>
                   </div>
 
-                  <MetricBoard metrics={detail.metrics} label={label} />
+                  <MetricBoard metrics={detail.metrics} data={detail} label={label} />
 
                   <dl className="archive-fact-grid archive-summary-facts">
                     <div>
@@ -564,7 +528,7 @@ export default function Archive({
                         <div className="archive-viewer empty-viewer">
                           <strong>{label('archive.sanitizedOnly', 'Sanitized summary only')}</strong>
                           <span>{label('archive.sanitizedDetail', 'Raw archive files stay unavailable in the public hosted demo.')}</span>
-                          <MetricBoard metrics={detail.metrics} label={label} />
+                          <MetricBoard metrics={detail.metrics} data={detail} label={label} />
                         </div>
                       )}
                   </div>

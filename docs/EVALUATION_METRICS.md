@@ -412,3 +412,56 @@ EX/EM 在结果组装时可附加 Wilson 95% 区间；连续指标提供 bootstr
 需要标记为近似或项目自定义的内容：SF1、VES、RVES、Schema Linking 精确匹配、L4 根因、L5 阶段归因和所有 Oracle 指标。
 
 发布或论文比较前必须先统一：结果表比较器、Schema 精确匹配、EM/CF1 解析、`EX@1`/`Oracle@k`/`Selected-EX` 命名，以及组件前后快照的可比性。
+
+## Run detail presentation and signal purpose (#41–46)
+
+Live and history run details share four layers: L1 EX + SF1; L2 R-VES
+with VES as reference; L3 EM and all available clause CF1 values; L4 observed
+outcomes, process evidence and error attribution. History summary cards remain
+EX-primary. The eight-column sample table precedes attribution. Missing evidence
+is displayed as unknown. Questions are omitted on hosted deployments and raw
+SQL/error payloads are never part of this projection.
+
+`ex_variant` is `spider`, `bird`, or `custom`. It describes the evaluator protocol,
+not the dataset name. The current reproduce evaluator emits `custom`; legacy
+bundles without provenance also read as custom. Official labels require actual
+execution of the corresponding declared evaluator. EX displays its variant even
+on a single benchmark. This avoids silently claiming official benchmark scores.
+Current R-VES remains the project approximation described above; no official
+binned thresholds are implemented, so the expandable definition shows the actual
+formula instead of fabricated bins.
+
+The version-1 `aggregate.process` outcome contract partitions *observed final
+outcomes*: `correct_ratio` (CR) is EX=1, `incorrect_ratio` (IR) is EX=0 without
+an execution error, and `error_ratio` (ER) is EX=0 with an execution error. Their
+common denominator is `outcome_observed`; `outcome_coverage` reports that count
+over all samples. No observed outcomes means null ratios. These project-defined
+ratios are not a claim of complete NL2SQLBench taxonomy conformance.
+C2I uses the existing `refinement_degradation_rate` and per-sample optimizer
+`degradation` fields; it is red only when the aggregate rate is positive.
+Unobserved before/after execution stays unknown. This is an observed change,
+not causal proof that an optimizer caused the result.
+
+### Offline gold evaluation versus production feedback (#45)
+
+`eval_gold_*` denotes a **purpose namespace** for label-dependent EX, EM, SF1,
+R-VES, clause CF1 and CR/IR/ER. Existing score-bundle metric IDs retain their
+compatibility names. These signals belong to outer-loop evaluation and must not
+be passed off as label-free production feedback. C2I based on gold before/after
+EX is also an offline evaluation signal.
+
+`feedback_*` denotes inner-loop observations available without reference SQL:
+execution success/error (separate from EX correctness), syntax/parse validity,
+latency and observed token usage with coverage. Missing usage is unknown, never
+zero. An optional judge or solver must declare its protocol, inputs, cost,
+provenance and uncertainty; it cannot inherit an EX correctness claim. FLEX,
+ROSE and SpotIt remain optional offline research directions, not new production
+judges or primary Demo UI features. No new judge is implemented by this note.
+Evolution acceptance profiles must state each signal's purpose and dependencies;
+review approval does not turn an offline signal into production feedback.
+
+Strict Evo acceptance and offline checks are described in
+[Verifiable evolution](VERIFIABLE_EVOLUTION.md). The detailed Demo dashboard
+separates scope, correctness, efficiency/cost, structure, process/errors and
+sample evidence. Each table includes units, meaning, sample counts and missing
+reasons; a missing fingerprint never supports a comparison claim.

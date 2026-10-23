@@ -116,3 +116,24 @@ class SnapshotApiTests(unittest.TestCase):
             self.assertEqual(response.status_code, 403)
             self.assertEqual(response.json["reason"], "local_only")
             self.assertEqual(self.client.get("/api/comparison-snapshots").status_code, 200)
+
+    def test_snapshot_values_come_from_the_run_and_changed_scores_are_flagged(self):
+        data = {'dataset': 'spider', 'split': 'dev', 'sampling': PAYLOAD['sampling'],
+                'values': {'ex': .5}, 'cost': {'tokens_total': 12}, 'sample_count': 2,
+                'sample_hash': 'same', 'scores_hash': 'original'}
+        self.existing = {'run-a'}
+        body = {**PAYLOAD, 'split': 'dev', 'members': [{**MEMBERS[0], 'run_id': 'run-a', 'values': {'ex': 1}}]}
+        with patch.object(self.api_server, '_snapshot_run_data', return_value=data):
+            response = self.client.post('/api/comparison-snapshots', json=body)
+            self.assertEqual(response.status_code, 201)
+            self.assertEqual(response.json['members'][0]['values']['ex'], .5)
+        with patch.object(self.api_server, '_snapshot_run_data', return_value={**data, 'scores_hash': 'changed'}):
+            loaded = self.client.get('/api/comparison-snapshots/' + response.json['id'])
+            self.assertEqual(loaded.json['members'][0]['status'], 'run_changed')
+
+    def test_snapshot_rejects_mismatched_sampling_and_invalid_shapes(self):
+        data = {'dataset': 'spider', 'split': 'dev', 'sampling': {'limit': 50, 'mode': 'slice'}}
+        with patch.object(self.api_server, '_snapshot_run_data', return_value=data):
+            self.assertEqual(self.client.post('/api/comparison-snapshots', json=PAYLOAD).status_code, 400)
+        for body in ([1], {**PAYLOAD, 'sampling': []}, {**PAYLOAD, 'source': 'unknown'}):
+            self.assertEqual(self.client.post('/api/comparison-snapshots', json=body).status_code, 400)

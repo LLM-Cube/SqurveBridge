@@ -40,8 +40,8 @@ test('heatmap rows follow the matrix axes and format unit metrics as percentages
   const rows = heatmapRows(matrix, 'ex')
   assert.deepEqual(rows.map(row => row.method), ['c3sql', 'dinsql'])
   assert.deepEqual(rows[0].cells.map(item => item.dataset), ['spider', 'bird'])
-  assert.equal(rows[0].cells[0].text, '80.0%')
-  assert.equal(rows[1].cells[0].text, '77.0%')
+  assert.equal(rows[0].cells[0].text, '80.0% · custom')
+  assert.equal(rows[1].cells[0].text, '77.0% · custom')
 })
 
 test('heatmap shade steps rise with the value and stay inside the ramp', () => {
@@ -88,8 +88,8 @@ test('grouped bars hold one group per benchmark and only comparable values', () 
   const groups = groupedBars(matrix, 'ex', ['c3sql', 'dinsql'])
   assert.deepEqual(groups.map(group => group.dataset), ['spider', 'bird'])
   assert.deepEqual(groups[0].bars, [
-    { method: 'c3sql', label: 'c3sql', value: 0.8, text: '80.0%', slot: 1 },
-    { method: 'dinsql', label: 'dinsql', value: 0.77, text: '77.0%', slot: 2 },
+    { method: 'c3sql', label: 'c3sql', value: 0.8, text: '80.0% · custom', slot: 1 },
+    { method: 'dinsql', label: 'dinsql', value: 0.77, text: '77.0% · custom', slot: 2 },
   ])
   assert.deepEqual(groups[1].bars, [], 'missing and unaligned cells are not drawn as bars')
   assert.deepEqual(groups[1].absent, [
@@ -112,15 +112,15 @@ const costed = {
 test('costScatter plots comparable cells that report the chosen cost', () => {
   const latency = costScatter(costed, 'ex', 'latency_s')
   assert.deepEqual(latency.points.map(point => [point.label, point.x, point.y]), [
-    ['c3sql · spider', 38.5, 0.8],
-    ['dinsql · spider', 38.3, 0.77],
+    ['c3sql · spider · EX custom', 38.5, 0.8],
+    ['dinsql · spider · EX custom', 38.3, 0.77],
   ])
   assert.equal(latency.xMax, 38.5)
   assert.equal(latency.yMax, 1)
-  assert.deepEqual(latency.omitted, ['finsql · spider'])
+  assert.deepEqual(latency.omitted, ['finsql · spider · EX custom'])
   const tokens = costScatter(costed, 'ex', 'tokens_total')
-  assert.deepEqual(tokens.points.map(point => point.label), ['c3sql · spider'])
-  assert.deepEqual(tokens.omitted, ['dinsql · spider', 'finsql · spider'])
+  assert.deepEqual(tokens.points.map(point => point.label), ['c3sql · spider · EX custom'])
+  assert.deepEqual(tokens.omitted, ['dinsql · spider · EX custom', 'finsql · spider · EX custom'])
 })
 
 test('diffCandidates offers only comparable runs, grouped by benchmark', () => {

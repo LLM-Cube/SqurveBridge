@@ -691,6 +691,37 @@ test('each matrix cell shows one state: no config, not installed, or its checkbo
   assert.doesNotMatch(selectable.textContent, /no config|not installed/)
 })
 
+test('the benchmark comparison sits under the results matrix and compares the chosen methods', async () => {
+  const matrix = {
+    methods: ['c3sql', 'dinsql'],
+    datasets: ['spider'],
+    metrics: [{ id: 'ex', label: 'Execution accuracy' }],
+    sampling: { limit: 20, mode: 'random', seed: 42 },
+    labels: { c3sql: 'C3SQL', dinsql: 'DINSQL' },
+    alignment: { spider: { aligned: true, sample_hash: 'x', methods: ['c3sql', 'dinsql'] } },
+    cells: [
+      { method: 'c3sql', dataset: 'spider', status: 'ok', sample_hash: 'same-cohort', values: { ex: 0.8 }, sample_count: 20, run_id: 'run-a' },
+      { method: 'dinsql', dataset: 'spider', status: 'ok', sample_hash: 'same-cohort', values: { ex: 0.77 }, sample_count: 20, run_id: 'run-b' },
+    ],
+  }
+  const api = async path => {
+    if (String(path).startsWith('/api/results/matrix')) return matrix
+    return { runs: [] }
+  }
+  renderDemo('en-US', baseCapabilities, { api })
+  const user = userEvent.setup()
+  await goToStep(user, 'Compare & History')
+  await user.click(screen.getByRole('button', { name: 'Past experiments' }))
+  await user.click(screen.getByRole('button', { name: 'Archived runs' }))
+  const benchmark = await screen.findByRole('group', { name: 'Benchmark' })
+  await user.click(within(benchmark).getByRole('button', { name: 'spider' }))
+  await user.click(screen.getByRole('checkbox', { name: 'C3SQL' }))
+  await user.click(screen.getByRole('checkbox', { name: 'DINSQL' }))
+  const table = screen.getByRole('table', { name: 'Metrics on spider' })
+  assert.equal(table.querySelectorAll('tbody tr').length, 2)
+  assert.equal(within(table).getByRole('row', { name: /C3SQL/ }).getAttribute('data-best'), 'true')
+})
+
 test('an unsent draft plan survives a page reload', async () => {
   const first = renderDemo()
   const user = userEvent.setup()
@@ -780,6 +811,40 @@ test('the Experiment tab shows where the plan is while it runs', async () => {
   await goToStep(user, 'Run')
   await user.click(screen.getByRole('button', { name: 'Run config' }))
   await waitFor(() => assert.equal(screen.getByTestId('experiment-status').textContent, 'Running'))
+})
+
+test('comparing two members of a benchmark opens their question diff', async () => {
+  const requested = []
+  const matrix = {
+    methods: ['c3sql', 'dinsql'],
+    datasets: ['spider'],
+    split: 'dev',
+    metrics: [{ id: 'ex', label: 'Execution accuracy' }],
+    sampling: { limit: 20, mode: 'slice', seed: 42 },
+    labels: { c3sql: 'C3SQL', dinsql: 'DINSQL' },
+    alignment: { spider: { aligned: true, sample_hash: 'x', methods: ['c3sql', 'dinsql'] } },
+    cells: [
+      { method: 'c3sql', dataset: 'spider', status: 'ok', sample_hash: 'same-cohort', values: { ex: 0.8 }, sample_count: 20, run_id: 'run-a', stages: {} },
+      { method: 'dinsql', dataset: 'spider', status: 'ok', sample_hash: 'same-cohort', values: { ex: 0.77 }, sample_count: 20, run_id: 'run-b', stages: {} },
+    ],
+  }
+  const api = async path => {
+    requested.push(String(path))
+    if (String(path).startsWith('/api/results/matrix')) return matrix
+    if (String(path).startsWith('/api/results/diff')) return { a: { run_id: 'run-a' }, b: { run_id: 'run-b' }, summary: {}, total: 0, rows: [] }
+    return { runs: [], experiments: [], snapshots: [] }
+  }
+  renderDemo('en-US', baseCapabilities, { api })
+  const user = userEvent.setup()
+  await goToStep(user, 'Compare & History')
+  await user.click(screen.getByRole('button', { name: 'Past experiments' }))
+  await user.click(screen.getByRole('button', { name: 'Archived runs' }))
+  const benchmark = await screen.findByRole('group', { name: 'Benchmark' })
+  await user.click(within(benchmark).getByRole('button', { name: 'spider' }))
+  await user.click(screen.getByRole('checkbox', { name: 'C3SQL' }))
+  await user.click(screen.getByRole('checkbox', { name: 'DINSQL' }))
+  await user.click(screen.getByRole('button', { name: 'Compare the two question by question' }))
+  await waitFor(() => assert.ok(requested.some(path => path.startsWith('/api/results/diff?') && path.includes('a=run-a') && path.includes('b=run-b'))))
 })
 
 test('an archived run of a variant says so, next to its method', async () => {

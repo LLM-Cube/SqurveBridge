@@ -166,6 +166,7 @@ class EvaluationBundleV2(StrictModel):
     model_config_id: str = "unknown"
     samples: list[SampleEvaluation]
     aggregate: dict[str, MetricResult] = Field(default_factory=dict)
+    ex_variant: Literal["spider", "bird", "custom"] = "custom"
     provenance: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")

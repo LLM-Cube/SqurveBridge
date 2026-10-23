@@ -85,7 +85,7 @@ export function CostScatter({ matrix, metricId, metricLabel, t }) {
 const CATEGORIES = ['a_only', 'b_only', 'both_wrong', 'both_right', 'unknown']
 
 /** Question-by-question comparison of two runs on one benchmark, with replay in Query. */
-export function DiffPanel({ api, matrix, onReplay, t }) {
+export function DiffPanel({ api, matrix, onReplay, pair = null, t }) {
   const candidates = useMemo(() => diffCandidates(matrix), [matrix])
   const datasets = Object.keys(candidates)
   const [dataset, setDataset] = useState(datasets[0] || '')
@@ -101,9 +101,20 @@ export function DiffPanel({ api, matrix, onReplay, t }) {
   }, [datasets.join('|')])
 
   useEffect(() => {
-    setAId(runs[0]?.runId || '')
-    setBId(runs[1]?.runId || '')
+    const requested = pair && runs.some(run => run.runId === pair.a) && runs.some(run => run.runId === pair.b)
+    setAId(requested ? pair.a : runs[0]?.runId || '')
+    setBId(requested ? pair.b : runs[1]?.runId || '')
   }, [dataset, runs.map(run => run.runId).join('|')])
+
+  // A pair chosen in the benchmark comparison replaces the default pair, once per choice.
+  useEffect(() => {
+    if (!pair) return
+    const owner = Object.entries(candidates).find(([, list]) => list.some(run => run.runId === pair.a))
+    if (!owner) return
+    setDataset(owner[0])
+    setAId(pair.a)
+    setBId(pair.b)
+  }, [pair?.stamp])
 
   useEffect(() => {
     if (!api || !aId || !bId || aId === bId) {

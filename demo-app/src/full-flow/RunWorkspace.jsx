@@ -1,3 +1,4 @@
+import DashboardMetrics from '../DashboardMetrics.jsx'
 import { useEffect, useMemo, useState } from 'react'
 import {
   configKey,
@@ -195,10 +196,6 @@ const percentLabel = value => {
   return `${(Number(value) * 100).toFixed(1)}%`
 }
 
-const compactNumber = value => {
-  if (value == null || Number.isNaN(Number(value))) return '—'
-  return Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(Number(value))
-}
 
 const metricAverage = block => {
   if (block == null) return null
@@ -253,27 +250,6 @@ export function resolveJobArtifact(job) {
   }
 }
 
-function MetricBarList({ items, valueOf, labelOf, empty }) {
-  if (!items.length) return <p className="run-artifact-empty">{empty}</p>
-  const max = Math.max(...items.map(item => Number(valueOf(item)) || 0), 0.0001)
-  return (
-    <ul className="run-artifact-bars">
-      {items.map(item => {
-        const value = Number(valueOf(item)) || 0
-        const width = Math.max(4, Math.round((value / max) * 100))
-        return (
-          <li key={labelOf(item)}>
-            <span>{labelOf(item)}</span>
-            <div className="run-artifact-bar-track" aria-hidden="true">
-              <i style={{ width: `${width}%` }} />
-            </div>
-            <strong>{percentLabel(value)}</strong>
-          </li>
-        )
-      })}
-    </ul>
-  )
-}
 
 function RunArtifactPanel({ job, t }) {
   const artifact = resolveJobArtifact(job)
@@ -293,48 +269,18 @@ function RunArtifactPanel({ job, t }) {
         </div>
       </header>
 
-      <div className="run-artifact-metrics">
-        {artifact.metricCards.map(card => (
-          <div key={card.key}>
-            <span>{card.label}</span>
-            <b>{percentLabel(card.value)}</b>
-          </div>
-        ))}
-        <div>
-          <span>{t('run.artifactTokens')}</span>
-          <b>{compactNumber(artifact.token.total_tokens)}</b>
-        </div>
-        <div>
-          <span>{t('run.artifactLatency')}</span>
-          <b>{artifact.latency.mean_s != null ? `${Number(artifact.latency.mean_s).toFixed(2)}s` : '—'}</b>
-        </div>
-      </div>
-
-      <div className="run-artifact-grid">
-        <div>
-          <h4>{t('run.artifactComponentF1')}</h4>
-          <MetricBarList
-            items={artifact.componentF1}
-            valueOf={item => item.value}
-            labelOf={item => item.name}
-            empty={t('run.artifactEmptySlice')}
-          />
-        </div>
-        <div>
-          <h4>{t('run.artifactErrorRoots')}</h4>
-          {artifact.errorRoots.length ? (
-            <ul className="run-artifact-errors">
-              {artifact.errorRoots.map(item => (
-                <li key={item.name}>
-                  <span>{item.name}</span>
-                  <strong>{item.count ?? '—'}</strong>
-                  <small>{item.rate == null ? '' : percentLabel(item.rate)}</small>
-                </li>
-              ))}
-            </ul>
-          ) : <p className="run-artifact-empty">{t('run.artifactEmptySlice')}</p>}
-        </div>
-      </div>
+      <DashboardMetrics runs={[{
+        ...job.artifact, ...job.result,
+        run_id: artifact.runId, method: artifact.method, dataset: artifact.dataset,
+        split: artifact.split, sample_count: artifact.sampleCount,
+        aggregate: {
+          ...job.artifact?.aggregate,
+          ...Object.fromEntries(artifact.metricCards.map(card => [card.key, { avg: card.value }])),
+          cf1: Object.fromEntries(artifact.componentF1.map(item => [`cf1_${item.name}`, { avg: item.value }])),
+        },
+        token: artifact.token, latency: artifact.latency,
+        errors: Object.fromEntries(artifact.errorRoots.map(item => [item.name, { count: item.count, pct: item.rate }])),
+      }]} t={t} />
 
       {artifact.stages.length ? (
         <div className="run-artifact-stages">
