@@ -574,6 +574,7 @@ test('expands archive charts inline without requesting raw files on hosted demo'
   await goToStep(user, 'Compare & History')
   await user.click(screen.getByRole('button', { name: 'Past experiments' }))
   await screen.findByText('run-archive-1')
+  assert.ok(screen.getAllByText(/EX · custom/).length > 0, 'history cards retain the execution protocol')
   await screen.findByRole('button', { name: 'Open run' })
   await user.click(screen.getByRole('button', { name: 'Open run' }))
   assert.ok(screen.getByTestId('evidence-run-page'))

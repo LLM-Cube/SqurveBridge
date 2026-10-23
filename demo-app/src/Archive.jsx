@@ -404,7 +404,7 @@ export default function Archive({
                         <i style={{ width: `${barWidth(ex)}%` }} />
                       </div>
                       <div className="archive-run-meta">
-                        <span>EX {percent(ex)}</span>
+                        <span>EX · {run.ex_variant || 'custom'} · {percent(ex)}</span>
                         <span>{run.sample_count ?? '—'} {label('archive.samplesShort', 'samples')}</span>
                         <span>{run.source}</span>
                       </div>
