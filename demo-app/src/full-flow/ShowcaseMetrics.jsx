@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { CostScatter, ErrorPanels, GroupedColumns, Heatmap, LatencyRange } from './ShowcaseCharts.jsx'
+import { METHOD_ORDER, CostScatter, DeltaDots, ErrorPanels, GroupedColumns, Heatmap, LatencyRange, OutcomeBars, PairBars, StagePipelines } from './ShowcaseCharts.jsx'
 import record from './showcaseRecord.js'
 import './showcaseMetrics.css'
 
@@ -27,12 +27,13 @@ function Section({ title, hint, chart, tableView, children }) {
       <h3>{title}</h3>
       {hint ? <p>{hint}</p> : null}
       {chart}
-      {chart ? (
+      {chart && children ? (
         <details className="showcase-metrics-tableview">
           <summary>{tableView}</summary>
           <div className="showcase-metrics-scroll">{children}</div>
         </details>
-      ) : <div className="showcase-metrics-scroll">{children}</div>}
+      ) : null}
+      {!chart && children ? <div className="showcase-metrics-scroll">{children}</div> : null}
     </section>
   )
 }
@@ -109,6 +110,28 @@ export default function ShowcaseMetrics({ t }) {
     .map(([id, run]) => ({ id, p50: run.cost.latency.p50_s, p95: run.cost.latency.p95_s }))
   const tableView = t('showcase.metrics.tableView')
 
+  // Structure delta: sort by how far a method strays, and fold the features nobody gets wrong into one note.
+  const deltaRows = union(run => run.structure_delta).map(key => ({
+    key, label: key,
+    cells: Object.fromEntries(runs.map(([id, run]) => [id, run.structure_delta[key] ?? null])),
+  }))
+  const strays = row => Math.max(...Object.values(row.cells).map(cell => (cell ? Math.abs(cell.mean) : 0)))
+  const flat = deltaRows.filter(row => strays(row) < 0.005 && Object.values(row.cells).every(cell => !cell || cell.std < 0.005))
+  const deltaShown = deltaRows.filter(row => !flat.includes(row)).sort((a, b) => strays(b) - strays(a))
+  const stagePanels = runs.map(([id, run]) => ({
+    id, stages: Object.entries(run.stages).flatMap(([stage, item]) => Object.entries(item.metrics)
+      .filter(([, metric]) => metric.status === 'ok').map(([metric, value]) => ({ name: `${stage} · ${metric}`, value: value.value }))),
+  }))
+  const processValue = (run, key) => (run.process[key]?.status === 'ok' ? run.process[key].value : null)
+  const outcomeRows = runs.filter(([, run]) => processValue(run, 'correct_ratio') !== null).map(([id, run]) => ({
+    id, correct: processValue(run, 'correct_ratio'), wrong: processValue(run, 'incorrect_ratio') ?? 0, error: processValue(run, 'error_ratio') ?? 0,
+  }))
+  const generationGroups = [['generation_pass1', 'pass@1'], ['generation_oracle_k', 'Oracle@k'], ['generation_exec_validity', t('showcase.metrics.execValidity')]].map(([key, text]) => ({
+    key, label: text, labelled: true,
+    bars: Object.fromEntries(runs.map(([id, run]) => [id, processValue(run, key) === null ? null : { value: processValue(run, key) }])),
+  }))
+  const unobserved = union(run => run.process).filter(key => runs.every(([, run]) => run.process[key].status !== 'ok'))
+
   const rowOf = (row, key) => <Plain key={key} text={row ? `${pct(row.ex) ?? '—'} · ${row.count}` : null} />
 
   return (
@@ -124,6 +147,17 @@ export default function ShowcaseMetrics({ t }) {
           ))}
         </div>
       </header>
+
+      <ul className="showcase-kpis" aria-label={t('showcase.metrics.kpis')}>
+        {runs.map(([id, run]) => (
+          <li key={id} data-method={id} data-valid={valid.has(id)} className={valid.has(id) ? '' : 'invalid'} style={{ '--c': `var(--series-${Math.max(1, METHOD_ORDER.indexOf(id) + 1)})` }}>
+            <span className="kpi-name">{id}<em>{valid.has(id) ? t('showcase.metrics.valid') : t('showcase.metrics.invalid')}</em></span>
+            <strong>{run.quality.ex.status === 'ok' ? run.quality.ex.value.toFixed(2) : '—'}</strong>
+            <small>EX · {run.quality.ex.numerator}/{run.quality.ex.denominator}</small>
+            <small>{t('showcase.metrics.kpiCost', { tokens: Math.round((run.cost.total_tokens || 0) / 1000), p50: num(run.cost.latency.p50_s, 0) })}</small>
+          </li>
+        ))}
+      </ul>
 
       <section className="showcase-metrics-validity" aria-label={t('showcase.metrics.validity')}>
         <p>{t('showcase.metrics.rule', { pct: rule })}</p>
@@ -205,17 +239,31 @@ export default function ShowcaseMetrics({ t }) {
         <GroupTable label={t('showcase.metrics.components')} runs={runs} pick={run => run.component_f1}
           cell={(value, key) => <Plain key={key} text={num(value, 3)} />} />
       </Section>
-      <Section title={t('showcase.metrics.delta')}>
+      <Section title={t('showcase.metrics.delta')} hint={t('showcase.metrics.deltaHint')} tableView={tableView}
+        chart={(
+          <>
+            {deltaShown.length ? <DeltaDots label={chartOf(t('showcase.metrics.delta'))} rows={deltaShown} methods={methods} t={t} /> : null}
+            {flat.length ? <p className="showcase-chart-note">{t('showcase.metrics.noDiff', { count: flat.length, names: flat.map(row => row.label).join(', ') })}</p> : null}
+          </>
+        )}>
         <GroupTable label={t('showcase.metrics.delta')} runs={runs} pick={run => run.structure_delta}
           cell={(row, key) => <Plain key={key} text={row ? `${num(row.mean, 2)} ± ${num(row.std, 2)}` : null} />} />
       </Section>
-      <Section title={t('showcase.metrics.stages')}>
+      <Section title={t('showcase.metrics.stages')} hint={t('showcase.metrics.stagesHint')} tableView={tableView}
+        chart={<StagePipelines label={chartOf(t('showcase.metrics.stages'))} panels={stagePanels} methods={methods} t={t} />}>
         <GroupTable label={t('showcase.metrics.stages')} runs={runs}
           pick={run => Object.fromEntries(Object.entries(run.stages).flatMap(([stage, item]) =>
             Object.entries(item.metrics).map(([metric, value]) => [`${stage} · ${metric}`, value])))}
           cell={(metric, key) => <MetricCell key={key} metric={metric} t={t} />} />
       </Section>
-      <Section title={t('showcase.metrics.process')} hint={t('showcase.metrics.processHint')}>
+      <Section title={t('showcase.metrics.process')} hint={t('showcase.metrics.processHint')} tableView={tableView}
+        chart={(
+          <>
+            <OutcomeBars label={chartOf(t('showcase.metrics.outcomes'))} rows={outcomeRows} methods={methods} t={t} />
+            <GroupedColumns label={chartOf(t('showcase.metrics.generation'))} groups={generationGroups} methods={methods} t={t} />
+            {unobserved.length ? <p className="showcase-chart-note" data-testid="unobserved">{t('showcase.metrics.unobserved', { count: unobserved.length, names: unobserved.join(', ') })}</p> : null}
+          </>
+        )}>
         <GroupTable label={t('showcase.metrics.process')} runs={runs} pick={run => run.process}
           cell={(metric, key) => <MetricCell key={key} metric={metric} t={t} />} />
       </Section>
@@ -224,9 +272,10 @@ export default function ShowcaseMetrics({ t }) {
           cell={(value, key) => <Plain key={key} text={num(value)} />} />
       </Section>
 
-      <Section title={t('showcase.metrics.pairwise')} hint={t('showcase.metrics.pairwiseHint')}>
+      <Section title={t('showcase.metrics.pairwise')} hint={t('showcase.metrics.pairwiseHint')} tableView={tableView}
+        chart={batch.pairwise.length ? <PairBars label={chartOf(t('showcase.metrics.pairwise'))} pairs={batch.pairwise} t={t} /> : <p className="showcase-metrics-empty">{t('showcase.metrics.noPairs')}</p>}>
         {batch.pairwise.length ? (
-          <table className="showcase-metrics-table" aria-label={t('showcase.metrics.pairwise')}>
+          <table className="showcase-metrics-table" aria-label={t('showcase.metrics.pairwiseTable')}>
             <thead><tr><th>A</th><th>B</th><th>{t('showcase.both')}</th><th>{t('showcase.metrics.onlyA')}</th><th>{t('showcase.metrics.onlyB')}</th><th>{t('showcase.neither')}</th></tr></thead>
             <tbody>
               {batch.pairwise.map(pair => (
@@ -234,7 +283,7 @@ export default function ShowcaseMetrics({ t }) {
               ))}
             </tbody>
           </table>
-        ) : <p className="showcase-metrics-empty">{t('showcase.metrics.noPairs')}</p>}
+        ) : null}
       </Section>
 
       <Section title={t('showcase.metrics.matrix')} hint={t('showcase.metrics.matrixHint')}>

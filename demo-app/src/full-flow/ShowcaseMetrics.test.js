@@ -11,6 +11,7 @@ const { cleanup, fireEvent, render, screen, within } = await import('@testing-li
 registerLoader('../cssTestLoader.mjs', import.meta.url)
 const unregister = register()
 const { default: ShowcaseMetrics } = await import('./ShowcaseMetrics.jsx')
+const { PairBars } = await import('./ShowcaseCharts.jsx')
 const { translate } = await import('../i18n/index.js')
 
 const t = (key, params) => translate('en-US', key, params)
@@ -180,11 +181,66 @@ test('component F1 cells show the recorded value', () => {
 
 test('each method gets its own error panel on a shared scale', () => {
   mount()
-  const panels = [...document.querySelectorAll('.showcase-panel-mini')]
+  const panels = [...chart('Error roots (count · share) chart').querySelectorAll('.showcase-panel-mini')]
   assert.deepEqual(panels.map(panel => panel.dataset.method), ['c3sql', 'dinsql', 'finsql', 'unisar'])
   const longest = panel => Math.max(...[...panel.querySelectorAll('[data-error]')].map(bar => Number(bar.dataset.value)))
   assert.equal(longest(panels[0]), 7)
   assert.equal(longest(panels[3]), 45)
+})
+
+test('summary tiles show each method headline and mark the invalid ones', () => {
+  mount()
+  const tiles = within(screen.getByRole('list', { name: 'Method summary' })).getAllByRole('listitem')
+  assert.deepEqual(tiles.map(tile => tile.dataset.method), ['c3sql', 'dinsql', 'finsql', 'unisar'])
+  assert.match(tiles[0].textContent, /0\.76.*EX · 38\/50/)
+  assert.deepEqual(tiles.map(tile => tile.dataset.valid), ['true', 'false', 'false', 'false'])
+  assert.ok(tiles[1].className.includes('invalid'))
+})
+
+test('structure delta: biggest strays first, zero-gap features folded into a note', () => {
+  mount()
+  const name = 'SQL structure delta (mean ± std) chart'
+  const rows = [...new Set(marks(name, '[data-row]').map(row => row.dataset.row))]
+  assert.deepEqual(rows.slice(0, 2), ['predicate', 'query_fields'], 'unisar strays furthest on predicates (-0.96), then query fields (-0.94)')
+  assert.ok(!rows.includes('window') && !rows.includes('math_compute'), 'features with no gap are not drawn')
+  assert.match(screen.getByText(/more show no difference/).textContent, /window/)
+  const dot = method => Number(marks(name, `[data-row="predicate"] [data-method="${method}"] circle`)[0].getAttribute('cx'))
+  assert.ok(dot('unisar') < dot('finsql') && dot('finsql') < dot('c3sql') && dot('c3sql') < dot('dinsql'), 'negative gaps sit left of the zero line, positive right')
+})
+
+test('stage metrics are drawn per method, only for stages that were computed', () => {
+  mount()
+  const name = 'Stage metrics chart'
+  const stages = method => marks(name, `[data-method="${method}"][data-stage]`)
+  assert.deepEqual(stages('c3sql').map(item => [item.dataset.stage, Number(item.dataset.value)]),
+    [['c3sql_reduce · reduce_rate', 1], ['c3sql_generate · execute_accuracy', 0.75]])
+  assert.equal(stages('finsql').length, 3)
+  assert.equal(marks(name, '[data-method="dinsql"][data-stage]').length, 0)
+  assert.ok(within(chart(name)).getByText('No computable stage metrics.'))
+})
+
+test('outcomes add up to every question and the unobserved process metrics are named, not zeroed', () => {
+  mount()
+  const parts = method => Object.fromEntries(marks('Outcomes chart', `g[data-method="${method}"] [data-outcome]`).map(part => [part.dataset.outcome, Number(part.dataset.value)]))
+  assert.deepEqual(parts('c3sql'), { correct: 0.76, wrong: 0.22, error: 0.02 })
+  const unisar = parts('unisar')
+  assert.ok(unisar.error > 0.85, 'most UniSAR questions ended in an execution error')
+  assert.ok(Math.abs(Object.values(unisar).reduce((a, b) => a + b, 0) - 1) < 1e-9)
+  assert.match(screen.getByTestId('unobserved').textContent, /not a score of 0.*refinement_fix_rate/)
+  assert.ok(chart('Generation quality chart'))
+})
+
+test('pair bars split the questions into both / only one / neither in proportion', () => {
+  cleanup()
+  const pairs = [{ a: 'c3sql', b: 'dinsql', both: 30, only_a: 5, only_b: 10, neither: 5 }]
+  render(React.createElement(PairBars, { label: 'pairs', pairs, t }))
+  const widths = Object.fromEntries([...document.querySelectorAll('[data-part]')].map(part => [part.dataset.part, Number(part.querySelector('rect').getAttribute('width'))]))
+  assert.deepEqual(Object.keys(widths), ['both', 'only_a', 'only_b', 'neither'])
+  assert.ok(Math.abs((widths.both + 2) / (widths.only_b + 2) - 3) < 0.01, '30 vs 10 questions is a 3:1 width')
+  assert.ok(Math.abs((widths.only_a + 2) - (widths.neither + 2)) < 0.01, 'equal counts, equal widths')
+  const colour = part => document.querySelector(`[data-part="${part}"] rect`).getAttribute('fill')
+  assert.equal(colour('only_a'), 'var(--series-1)')
+  assert.equal(colour('only_b'), 'var(--series-2)')
 })
 
 test('the page shows no benchmark questions, SQL, identifiers or paths', () => {

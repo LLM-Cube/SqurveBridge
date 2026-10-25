@@ -305,3 +305,186 @@ export function ErrorPanels({ label, panels, methods, t }) {
     </Frame>
   )
 }
+
+/** Signed gap between predicted and gold SQL per feature: one dot and ±std whisker per method on a zero-centred axis. */
+export function DeltaDots({ label, rows, methods, t }) {
+  const chart = useTip()
+  const W = 700, labelW = 150, rowH = 54, m = { t: 34, b: 26, r: 22 }
+  const H = m.t + rows.length * rowH + m.b
+  const reach = Math.max(0.5, ...rows.flatMap(row => methods.map(method => {
+    const cell = row.cells[method.id]
+    return cell ? Math.abs(cell.mean) + cell.std : 0
+  })))
+  const extent = Math.ceil(reach * 2) / 2
+  const x = value => labelW + ((W - labelW - m.r) * (value + extent)) / (2 * extent)
+  const clamp = value => Math.max(-extent, Math.min(extent, value))
+  const ticks = [-extent, -extent / 2, 0, extent / 2, extent]
+  return (
+    <Frame chart={chart} label={label} legend={<Legend methods={methods} t={t} />}>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" focusable="false">
+        <text x={x(-extent)} y="16" fontSize="11" fill={MUTED}>← {t('showcase.metrics.deltaFewer')}</text>
+        <text x={x(extent)} y="16" fontSize="11" fill={MUTED} textAnchor="end">{t('showcase.metrics.deltaMore')} →</text>
+        {ticks.map(tick => (
+          <g key={tick}>
+            <line x1={x(tick)} x2={x(tick)} y1={m.t - 6} y2={H - m.b} stroke={tick === 0 ? MUTED : GRID} strokeWidth={tick === 0 ? 1.4 : 1} />
+            <text x={x(tick)} y={H - 8} textAnchor="middle" fontSize="10.5" fill={MUTED}>{tick.toFixed(1)}</text>
+          </g>
+        ))}
+        {rows.map((row, r) => {
+          const top = m.t + r * rowH
+          return (
+            <g key={row.key} data-row={row.key}>
+              {r ? <line x1="0" x2={W - m.r} y1={top} y2={top} stroke={GRID} strokeDasharray="2 4" /> : null}
+              <text x={labelW - 12} y={top + rowH / 2 + 4} textAnchor="end" fontSize="11.5" fill={INK}>{row.label}</text>
+              {methods.map((method, i) => {
+                const cell = row.cells[method.id]
+                if (!cell) return null
+                const y = top + 11 + i * 11
+                return (
+                  <g key={method.id} {...chart.mark(`${row.label} · ${method.id} · ${cell.mean.toFixed(2)} ± ${cell.std.toFixed(2)}${method.valid ? '' : ` · ${t('showcase.metrics.invalidShort')}`}`)}
+                    data-method={method.id} data-mean={cell.mean} data-valid={method.valid}>
+                    <line x1={x(clamp(cell.mean - cell.std))} x2={x(clamp(cell.mean + cell.std))} y1={y} y2={y} stroke={colorOf(method.id)} strokeWidth="1.6" strokeOpacity={method.valid ? 1 : 0.55} />
+                    <circle cx={x(clamp(cell.mean))} cy={y} r="4.6" fill={method.valid ? colorOf(method.id) : SURFACE} stroke={method.valid ? SURFACE : colorOf(method.id)} strokeWidth={method.valid ? 1.5 : 1.8} />
+                  </g>
+                )
+              })}
+            </g>
+          )
+        })}
+      </svg>
+    </Frame>
+  )
+}
+
+/** Each method's own pipeline stages as bars on a 0-1 scale: stage names differ per method, so one panel each. */
+export function StagePipelines({ label, panels, methods, t }) {
+  const uid = useId().replace(/:/g, '')
+  const chart = useTip()
+  const rowH = 24, labelW = 190, W = 440
+  return (
+    <Frame chart={chart} label={label} legend={<Legend methods={methods} t={t} />}>
+      <div className="showcase-panels">
+        {panels.map(panel => {
+          const method = methods.find(item => item.id === panel.id)
+          const H = Math.max(rowH, panel.stages.length * rowH) + 6
+          return (
+            <div key={panel.id} className="showcase-panel-mini" data-method={panel.id}>
+              <h4 style={{ color: colorOf(panel.id) }}>{panel.id}{method.valid ? '' : ` · ${t('showcase.metrics.invalidShort')}`}</h4>
+              {panel.stages.length ? (
+                <svg viewBox={`0 0 ${W} ${H}`} width="100%" focusable="false">
+                  <Hatches uid={uid} methods={[method]} />
+                  {panel.stages.map((stage, i) => {
+                    const w = (W - labelW - 56) * stage.value
+                    const y = i * rowH + 4
+                    return (
+                      <g key={stage.name} {...chart.mark(`${panel.id} · ${stage.name} · ${stage.value.toFixed(3)}`)} data-method={panel.id} data-stage={stage.name} data-value={stage.value}>
+                        <text x={labelW - 8} y={y + 12} textAnchor="end" fontSize="11" fill={INK}>{stage.name}</text>
+                        <rect x={labelW} y={y} width={W - labelW - 56} height="16" rx="3" fill={GRID} />
+                        <rect x={labelW} y={y} width={Math.max(w, 1)} height="16" rx="3" fill={fillOf(uid, method)} stroke={method.valid ? 'none' : colorOf(panel.id)} />
+                        <text x={labelW + (W - labelW - 56) + 8} y={y + 12} fontSize="11" fill={MUTED}>{stage.value.toFixed(2)}</text>
+                      </g>
+                    )
+                  })}
+                </svg>
+              ) : <p className="showcase-chart-note">{t('showcase.metrics.noStages')}</p>}
+            </div>
+          )
+        })}
+      </div>
+    </Frame>
+  )
+}
+
+const WRONG = '#b9ae9a'
+const ERROR_INK = '#6b6152'
+
+/** What happened to every question: correct (the method's colour), wrong answer, or execution error. */
+export function OutcomeBars({ label, rows, methods, t }) {
+  const uid = useId().replace(/:/g, '')
+  const chart = useTip()
+  const W = 700, labelW = 90, rowH = 40, m = { t: 30, r: 16, b: 8 }
+  const H = m.t + rows.length * rowH + m.b
+  const full = W - labelW - m.r
+  return (
+    <Frame chart={chart} label={label} legend={<Legend methods={methods} t={t} />}>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" focusable="false">
+        <Hatches uid={uid} methods={methods} />
+        <defs>
+          <pattern id={`${uid}-err`} width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
+            <rect width="6" height="6" fill={WRONG} /><rect width="2" height="6" fill={ERROR_INK} />
+          </pattern>
+        </defs>
+        <rect x={labelW} y="6" width="12" height="12" rx="3" fill="var(--series-1)" /><text x={labelW + 18} y="16" fontSize="11" fill={INK}>{t('showcase.metrics.outcomeCorrect')}</text>
+        <rect x={labelW + 120} y="6" width="12" height="12" rx="3" fill={WRONG} /><text x={labelW + 138} y="16" fontSize="11" fill={INK}>{t('showcase.metrics.outcomeWrong')}</text>
+        <rect x={labelW + 250} y="6" width="12" height="12" rx="3" fill={`url(#${uid}-err)`} /><text x={labelW + 268} y="16" fontSize="11" fill={INK}>{t('showcase.metrics.outcomeError')}</text>
+        {rows.map((row, i) => {
+          const method = methods.find(item => item.id === row.id)
+          const y = m.t + i * rowH
+          let cursor = labelW
+          const parts = [
+            ['correct', row.correct, fillOf(uid, method)],
+            ['wrong', row.wrong, WRONG],
+            ['error', row.error, `url(#${uid}-err)`],
+          ]
+          return (
+            <g key={row.id} data-method={row.id} data-valid={method.valid}>
+              <text x={labelW - 10} y={y + 17} textAnchor="end" fontSize="11.5" fill={INK}>{row.id}</text>
+              {parts.map(([key, value, fill]) => {
+                if (!value) return null
+                const w = full * value
+                const x = cursor
+                cursor += w
+                return (
+                  <g key={key} {...chart.mark(`${row.id} · ${t(`showcase.metrics.outcome${key[0].toUpperCase()}${key.slice(1)}`)} ${(value * 100).toFixed(1)}%${method.valid ? '' : ` · ${t('showcase.metrics.invalidShort')}`}`)} data-outcome={key} data-value={value}>
+                    <rect x={x} y={y} width={Math.max(w - 2, 1)} height="26" rx="3" fill={fill} stroke={key === 'correct' && !method.valid ? colorOf(row.id) : 'none'} />
+                    {w > 44 ? <text x={x + (w - 2) / 2} y={y + 17} textAnchor="middle" fontSize="11" fontWeight="600" fill={key === 'correct' && method.valid ? '#fff' : INK}>{Math.round(value * 100)}%</text> : null}
+                  </g>
+                )
+              })}
+            </g>
+          )
+        })}
+      </svg>
+    </Frame>
+  )
+}
+
+/** For each pair of valid methods: questions both got, only one got, or neither got. */
+export function PairBars({ label, pairs, t }) {
+  const chart = useTip()
+  const W = 700, labelW = 170, rowH = 40, m = { t: 30, r: 16, b: 8 }
+  const H = m.t + pairs.length * rowH + m.b
+  const full = W - labelW - m.r
+  return (
+    <Frame chart={chart} label={label} legend={null}>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" focusable="false">
+        {[[t('showcase.both'), ACCENT], [t('showcase.neither'), '#d6ccb9']].map(([text, fill], i) => (
+          <g key={text}><rect x={labelW + i * 118} y="6" width="12" height="12" rx="3" fill={fill} /><text x={labelW + i * 118 + 18} y="16" fontSize="11" fill={INK}>{text}</text></g>
+        ))}
+        {pairs.map((pair, i) => {
+          const total = pair.both + pair.only_a + pair.only_b + pair.neither
+          const y = m.t + i * rowH
+          let cursor = labelW
+          const parts = [['both', pair.both, ACCENT], ['only_a', pair.only_a, colorOf(pair.a)], ['only_b', pair.only_b, colorOf(pair.b)], ['neither', pair.neither, '#d6ccb9']]
+          return (
+            <g key={`${pair.a}-${pair.b}`} data-pair={`${pair.a}-${pair.b}`}>
+              <text x={labelW - 10} y={y + 17} textAnchor="end" fontSize="11.5" fill={INK}>{pair.a} ↔ {pair.b}</text>
+              {parts.map(([key, value, fill]) => {
+                if (!value) return null
+                const w = (full * value) / total
+                const x = cursor
+                cursor += w
+                return (
+                  <g key={key} {...chart.mark(`${pair.a} ↔ ${pair.b} · ${key.replace('_', ' ')} · ${value}`)} data-part={key} data-value={value}>
+                    <rect x={x} y={y} width={Math.max(w - 2, 1)} height="26" rx="3" fill={fill} />
+                    {w > 26 ? <text x={x + (w - 2) / 2} y={y + 17} textAnchor="middle" fontSize="11" fontWeight="600" fill={key === 'neither' ? INK : '#fff'}>{value}</text> : null}
+                  </g>
+                )
+              })}
+            </g>
+          )
+        })}
+      </svg>
+    </Frame>
+  )
+}
