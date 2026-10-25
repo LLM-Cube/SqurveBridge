@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Legend, METHOD_ORDER, CostScatter, DeltaDots, ErrorPanels, GroupedColumns, Heatmap, LatencyRange, OutcomeBars, PairBars, StagePipelines } from './ShowcaseCharts.jsx'
 import record from './showcaseRecord.js'
+import { useStableHeight } from './useStableHeight.js'
 import './showcaseMetrics.css'
 
 const pct = value => (value === null || value === undefined ? null : `${(value * 100).toFixed(1)}%`)
@@ -69,6 +70,7 @@ const startLevel = () => {
 export default function ShowcaseMetrics({ t, data = record }) {
   const [batchId, setBatchId] = useState(() => data.batches.at(-1).id)
   const [level, setLevel] = useState(startLevel)
+  const [panelsRef, panelsStyle] = useStableHeight()
   const batch = data.batches.find(item => item.id === batchId) || data.batches[0]
   const runs = useMemo(() => Object.entries(batch.runs), [batch])
   const valid = new Set(batch.ranking)
@@ -366,11 +368,13 @@ export default function ShowcaseMetrics({ t, data = record }) {
         </div>
         <Legend methods={methods} t={t} />
       </div>
-      {levelTabs.map(([id, sections]) => (level === id ? (
-        <div key={id} id={`showcase-panel-${id}`} role="tabpanel" aria-labelledby={`showcase-tab-${id}`} className="showcase-metrics-grid" data-level={id}>
-          {sections}
-        </div>
-      ) : null))}
+      <div className="showcase-metrics-panels" ref={panelsRef} style={panelsStyle}>
+        {levelTabs.map(([id, sections]) => (level === id ? (
+          <div key={id} id={`showcase-panel-${id}`} role="tabpanel" aria-labelledby={`showcase-tab-${id}`} className="showcase-metrics-grid" data-level={id}>
+            {sections}
+          </div>
+        ) : null))}
+      </div>
 
       <p className="showcase-metrics-source">
         {t('showcase.metrics.source', {
