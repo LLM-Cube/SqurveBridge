@@ -151,5 +151,5 @@ development launcher only when explicitly enabling the Agent runtime.
 
 ```bash
 # 原始运行按 <批次>/<方法>/ 放在本地目录，例如 workspace/showcase-runs/<日期>/
-.venv/bin/python demo/showcase_record.py workspace/showcase-runs/<日期> demo-app/src/full-flow/showcaseRecord.js
+.venv/bin/python demo/showcase_record.py workspace/showcase-runs/<日期> demo-app/src/full-flow/showcaseRecord.js --batch n50   # 只记录 50 题切片；省略 --batch 则记录目录下全部批次
 ```

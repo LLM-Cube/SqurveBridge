@@ -188,9 +188,15 @@ def _build_batch(batch: Path) -> dict:
     }
 
 
-def build_record(root: Path) -> dict:
+def build_record(root: Path, batches: list[str] | None = None) -> dict:
+    """The record of every batch under ``root``, or only the named ones."""
     root = Path(root)
-    batches = [_build_batch(path) for path in sorted(root.iterdir()) if path.is_dir()]
+    found = {path.name: path for path in sorted(root.iterdir()) if path.is_dir()}
+    missing = [name for name in batches or [] if name not in found]
+    if missing:
+        raise ValueError(f"no such batch under {root.name}: {', '.join(missing)}")
+    chosen = [found[name] for name in batches] if batches else list(found.values())
+    batches = [_build_batch(path) for path in sorted(chosen)]
     return {"schema_version": SCHEMA_VERSION, "batches": batches}
 
 
@@ -204,8 +210,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build the showcase metrics record from archived runs.")
     parser.add_argument("root", type=Path, help="directory of run batches (<batch>/<method>/)")
     parser.add_argument("out", type=Path, help="JavaScript module to write")
+    parser.add_argument("--batch", action="append", help="record only this batch (repeatable); default: all")
     args = parser.parse_args(argv)
-    built = build_record(args.root)
+    built = build_record(args.root, args.batch)
     args.out.write_text(render_module(built), encoding="utf-8")
     for batch in built["batches"]:
         print(f"{batch['id']}: ranking={batch['ranking']} invalid={batch['invalid_runs']}")

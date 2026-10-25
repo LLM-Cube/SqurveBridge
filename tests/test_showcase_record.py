@@ -226,6 +226,14 @@ class ShowcaseRecordTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "n5.*same questions"):
             record.build_record(self.root)
 
+    def test_only_the_requested_batches_are_recorded(self):
+        write_run(self.root, "n5", "alpha", ex=[1, 1, 0, 1, 0])
+        write_run(self.root, "n3", "alpha", ex=[1, 1, 0, 1, 0], limit=3)
+        self.assertEqual([batch["id"] for batch in record.build_record(self.root)["batches"]], ["n3", "n5"])
+        self.assertEqual([batch["id"] for batch in record.build_record(self.root, batches=["n5"])["batches"]], ["n5"])
+        with self.assertRaisesRegex(ValueError, "n9"):
+            record.build_record(self.root, batches=["n9"])
+
 
 if __name__ == "__main__":
     unittest.main()

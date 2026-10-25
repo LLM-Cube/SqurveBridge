@@ -89,7 +89,7 @@ export function GroupedColumns({ label, groups, methods, t, tipLabel }) {
   const barWidth = Math.min(28, (groupWidth - 24) / methods.length - 2)
   const spread = methods.length * (barWidth + 2) - 2
   return (
-    <Frame chart={chart} label={label} legend={<Legend methods={methods} t={t} />}>
+    <Frame chart={chart} label={label} legend={null}>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" focusable="false">
         <Hatches uid={uid} methods={methods} />
         {[0, 0.25, 0.5, 0.75, 1].map(tick => (
@@ -147,7 +147,7 @@ export function CostScatter({ label, points, methods, xLabel, yLabel, t }) {
   const x = value => m.l + (pw * value) / xmax
   const y = value => m.t + ph * (1 - value)
   return (
-    <Frame chart={chart} label={label} legend={<Legend methods={methods} t={t} />}>
+    <Frame chart={chart} label={label} legend={null}>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" focusable="false">
         <Hatches uid={uid} methods={methods} />
         {[0, 0.25, 0.5, 0.75, 1].map(tick => (
@@ -189,7 +189,7 @@ export function LatencyRange({ label, rows, methods, t }) {
   const xmax = Math.max(...rows.map(row => row.p95)) * 1.1 || 1
   const x = value => m.l + (pw * value) / xmax
   return (
-    <Frame chart={chart} label={label} legend={<Legend methods={methods} t={t} />}>
+    <Frame chart={chart} label={label} legend={null}>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" focusable="false">
         <Hatches uid={uid} methods={methods} />
         {[0, 0.25, 0.5, 0.75, 1].map(tick => (
@@ -225,7 +225,7 @@ export function Heatmap({ label, rows, methods, t }) {
   const W = left + methods.length * cell.w + 8
   const H = 34 + rows.length * (cell.h + 2) + 6
   return (
-    <Frame chart={chart} label={label} legend={<Legend methods={methods} t={t} />}>
+    <Frame chart={chart} label={label} legend={null}>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ maxWidth: W }} focusable="false">
         <defs>
           <pattern id="sm-empty" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
@@ -274,7 +274,7 @@ export function ErrorPanels({ label, panels, methods, t }) {
   const max = Math.max(1, ...panels.flatMap(panel => panel.rows.map(row => row.count)))
   const rowH = 22, labelW = 150, W = 330
   return (
-    <Frame chart={chart} label={label} legend={<Legend methods={methods} t={t} />}>
+    <Frame chart={chart} label={label} legend={null}>
       <div className="showcase-panels">
         {panels.map(panel => {
           const method = methods.find(item => item.id === panel.id)
@@ -309,7 +309,7 @@ export function ErrorPanels({ label, panels, methods, t }) {
 /** Signed gap between predicted and gold SQL per feature: one dot and ±std whisker per method on a zero-centred axis. */
 export function DeltaDots({ label, rows, methods, t }) {
   const chart = useTip()
-  const W = 700, labelW = 150, rowH = 54, m = { t: 34, b: 26, r: 22 }
+  const W = 700, labelW = 150, rowH = 46, m = { t: 34, b: 26, r: 22 }
   const H = m.t + rows.length * rowH + m.b
   const reach = Math.max(0.5, ...rows.flatMap(row => methods.map(method => {
     const cell = row.cells[method.id]
@@ -320,7 +320,7 @@ export function DeltaDots({ label, rows, methods, t }) {
   const clamp = value => Math.max(-extent, Math.min(extent, value))
   const ticks = [-extent, -extent / 2, 0, extent / 2, extent]
   return (
-    <Frame chart={chart} label={label} legend={<Legend methods={methods} t={t} />}>
+    <Frame chart={chart} label={label} legend={null}>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" focusable="false">
         <text x={x(-extent)} y="16" fontSize="11" fill={MUTED}>← {t('showcase.metrics.deltaFewer')}</text>
         <text x={x(extent)} y="16" fontSize="11" fill={MUTED} textAnchor="end">{t('showcase.metrics.deltaMore')} →</text>
@@ -339,7 +339,7 @@ export function DeltaDots({ label, rows, methods, t }) {
               {methods.map((method, i) => {
                 const cell = row.cells[method.id]
                 if (!cell) return null
-                const y = top + 11 + i * 11
+                const y = top + 9 + i * 10
                 return (
                   <g key={method.id} {...chart.mark(`${row.label} · ${method.id} · ${cell.mean.toFixed(2)} ± ${cell.std.toFixed(2)}${method.valid ? '' : ` · ${t('showcase.metrics.invalidShort')}`}`)}
                     data-method={method.id} data-mean={cell.mean} data-valid={method.valid}>
@@ -360,9 +360,9 @@ export function DeltaDots({ label, rows, methods, t }) {
 export function StagePipelines({ label, panels, methods, t }) {
   const uid = useId().replace(/:/g, '')
   const chart = useTip()
-  const rowH = 24, labelW = 190, W = 440
+  const rowH = 24, labelW = 170, W = 420
   return (
-    <Frame chart={chart} label={label} legend={<Legend methods={methods} t={t} />}>
+    <Frame chart={chart} label={label} legend={null}>
       <div className="showcase-panels">
         {panels.map(panel => {
           const method = methods.find(item => item.id === panel.id)
@@ -378,7 +378,7 @@ export function StagePipelines({ label, panels, methods, t }) {
                     const y = i * rowH + 4
                     return (
                       <g key={stage.name} {...chart.mark(`${panel.id} · ${stage.name} · ${stage.value.toFixed(3)}`)} data-method={panel.id} data-stage={stage.name} data-value={stage.value}>
-                        <text x={labelW - 8} y={y + 12} textAnchor="end" fontSize="11" fill={INK}>{stage.name}</text>
+                        <text x={labelW - 8} y={y + 12} textAnchor="end" fontSize="11" fill={INK}>{stage.name.replace(`${panel.id}_`, '')}</text>
                         <rect x={labelW} y={y} width={W - labelW - 56} height="16" rx="3" fill={GRID} />
                         <rect x={labelW} y={y} width={Math.max(w, 1)} height="16" rx="3" fill={fillOf(uid, method)} stroke={method.valid ? 'none' : colorOf(panel.id)} />
                         <text x={labelW + (W - labelW - 56) + 8} y={y + 12} fontSize="11" fill={MUTED}>{stage.value.toFixed(2)}</text>
@@ -406,7 +406,7 @@ export function OutcomeBars({ label, rows, methods, t }) {
   const H = m.t + rows.length * rowH + m.b
   const full = W - labelW - m.r
   return (
-    <Frame chart={chart} label={label} legend={<Legend methods={methods} t={t} />}>
+    <Frame chart={chart} label={label} legend={null}>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" focusable="false">
         <Hatches uid={uid} methods={methods} />
         <defs>
