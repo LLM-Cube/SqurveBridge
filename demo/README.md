@@ -141,3 +141,15 @@ UI and API with Python only, forces Agent off and never starts Pi or Node.
 Build the frontend once with `npm ci --prefix demo-app` and
 `npm run build --prefix demo-app`. Set `SQURVE_DEMO_AGENT=on` and use the usual
 development launcher only when explicitly enabling the Agent runtime.
+
+### 真实运行指标记录
+
+演示页的「演示」步骤展示一份由真实运行构建的指标记录（`demo-app/src/full-flow/showcaseRecord.js`）。
+记录只含聚合指标、逐题对错和匿名序号，不含题目、SQL、日志或绝对路径；原始评分包留在本地
+`workspace/` 下。每个方法带有效性判定：空预测或仅含 `SELECT` 的预测占比达到 20% 即判无效，
+无效运行保留在记录中但不参与排名与对比。
+
+```bash
+# 原始运行按 <批次>/<方法>/ 放在本地目录，例如 workspace/showcase-runs/<日期>/
+.venv/bin/python demo/showcase_record.py workspace/showcase-runs/<日期> demo-app/src/full-flow/showcaseRecord.js
+```

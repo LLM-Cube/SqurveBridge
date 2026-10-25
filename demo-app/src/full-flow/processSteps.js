@@ -1,7 +1,11 @@
 // Studio introduces; the experiment is one page that reads top to bottom as
-// compose → run → compare & history; Query stands apart for single questions.
+// compose → run → compare & history; Query stands apart for single questions;
+// Showcase replays a recorded mock run and needs no backend.
 export const EXPERIMENT_SECTIONS = ['compose', 'board', 'evidence']
-export const PROCESS_STEPS = ['configure', 'experiment', 'query']
+export const PROCESS_STEPS = ['configure', 'experiment', 'query', 'showcase']
+
+/** Every page in walking order: the experiment is three sections, the rest one page each. */
+export const STEP_SEQUENCE = PROCESS_STEPS.flatMap(step => (step === 'experiment' ? EXPERIMENT_SECTIONS : [step]))
 
 const LEGACY_STEP_MAP = {
   run: 'board',

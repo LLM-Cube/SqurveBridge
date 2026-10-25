@@ -108,12 +108,25 @@ test('renders five bilingual modules in process order', () => {
   const tabs = screen.getByRole('navigation', { name: 'Workflow stages' })
   assert.deepEqual(
     within(tabs).getAllByRole('button').map(button => button.textContent),
-    ['Studio', 'ExperimentDraft', 'Query'],
+    ['Studio', 'ExperimentDraft', 'Query', 'Showcase'],
     'compose, run and compare & history are one experiment page',
   )
   assert.ok(document.querySelector('.agent-chat-body'))
   assert.ok(screen.getByTestId('pi-backend-badge'))
   assert.match(screen.getByTestId('pi-backend-badge').textContent, /Pi/)
+})
+
+test('the showcase tab opens the recorded replay without a backend', async () => {
+  renderDemo('en-US')
+  const user = userEvent.setup()
+  assert.equal(screen.getByTestId('flow-stage-showcase').hidden, true)
+  await user.click(within(screen.getByRole('navigation', { name: 'Workflow stages' })).getByRole('button', { name: 'Showcase' }))
+  assert.equal(screen.getByTestId('flow-stage').getAttribute('data-active-step'), 'showcase')
+  assert.equal(screen.getByTestId('flow-stage-showcase').hidden, false)
+  assert.equal(window.location.hash, '#showcase')
+  const page = screen.getByTestId('showcase-page')
+  assert.ok(within(page).getByTestId('showcase-metrics'), 'the recorded real-run metrics are on the page')
+  assert.ok(within(page).getByRole('table', { name: 'Answer quality' }))
 })
 
 test('collapses either pane without hiding both and persists the shell layout', async () => {

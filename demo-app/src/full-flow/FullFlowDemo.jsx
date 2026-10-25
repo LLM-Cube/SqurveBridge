@@ -6,6 +6,7 @@ import ConnectionComposer from './ConnectionComposer.jsx'
 import EvidenceHub from './EvidenceHub.jsx'
 import ExperimentGrid from './ExperimentGrid.jsx'
 import QueryWorkspace from './QueryWorkspace.jsx'
+import ShowcasePage from './ShowcasePage.jsx'
 import {
   DATABASES,
   METHODS,
@@ -16,7 +17,7 @@ import {
   selectedMethodsFromConnections,
   withConnectionKeys,
 } from './model.js'
-import { EXPERIMENT_SECTIONS, PROCESS_STEPS, resolveProcessStep, resolveSection } from './processSteps.js'
+import { EXPERIMENT_SECTIONS, PROCESS_STEPS, resolveProcessStep, resolveSection, STEP_SEQUENCE } from './processSteps.js'
 import { INITIAL_RUN_STATE } from './RunWorkspace.jsx'
 import { displayNamesFor } from './resultsModel.js'
 import { normalizeProposal, pageContextFor } from '../agentActions.js'
@@ -556,6 +557,7 @@ export default function FullFlowDemo({
         t={t}
       />
     ),
+    showcase: <ShowcasePage t={t} active={activeStep === 'showcase'} />,
   }
 
   // The Experiment tab says where the plan is: being run, finished, or failed.
@@ -714,14 +716,14 @@ export default function FullFlowDemo({
             </h2>
             <div className="agent-live-workspace-actions">
               <button type="button" aria-label={t('process.previous')} onClick={() => {
-                const steps = ['configure', ...EXPERIMENT_SECTIONS, 'query']
+                const steps = STEP_SEQUENCE
                 const index = steps.indexOf(activeStep === 'experiment' ? sectionRequest.section || 'compose' : activeStep)
                 if (index > 0) navigateToStep(steps[index - 1])
               }}>
                 ‹
               </button>
               <button type="button" aria-label={t('process.next')} onClick={() => {
-                const steps = ['configure', ...EXPERIMENT_SECTIONS, 'query']
+                const steps = STEP_SEQUENCE
                 const index = steps.indexOf(activeStep === 'experiment' ? sectionRequest.section || 'compose' : activeStep)
                 const next = steps[index + 1]
                 if (next) navigateToStep(next === 'board' && !planSummary(plan).cells ? 'compose' : next)
