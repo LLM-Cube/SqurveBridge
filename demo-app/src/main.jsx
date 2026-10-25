@@ -13,7 +13,13 @@ import { useLiveModels } from './useLiveModels.js'
 const api = async (path, options = {}) => {
   const response = await fetch(path, options)
   const data = await response.json().catch(() => ({ message: response.statusText }))
-  if (!response.ok) throw new Error(sanitizeRunError({ message: data.message || 'Request failed' }))
+  if (!response.ok) {
+    // Keep the server's reason and any per-cell refusals, so the page can name what to fix.
+    const error = new Error(sanitizeRunError({ message: data.message || 'Request failed' }))
+    error.code = data.code
+    error.cells = Array.isArray(data.cells) ? data.cells : []
+    throw error
+  }
   return data
 }
 
@@ -214,10 +220,9 @@ function App() {
   const [sqlAuthOpen, setSqlAuthOpen] = useState(false)
   const [localProviderOpen, setLocalProviderOpen] = useState(false)
   const [bootError, setBootError] = useState(false)
-  const [bootLocale] = useState(() => detectLocale(
-    navigator.language,
-    window.localStorage.getItem('squrve-demo-locale'),
-  ))
+  const [bootLocale] = useState(() => {
+    try { return detectLocale(window.localStorage.getItem('squrve-demo-locale')) } catch { return detectLocale(null) }
+  })
   const hosted = deploymentTarget(capabilities) === 'hf-space'
   const sessionSqlAuth = hosted && featureEnabled(capabilities, 'session_sql_auth')
   const refresh = async () => {

@@ -1,13 +1,17 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useReducer, useState } from 'react'
 import Archive from '../Archive.jsx'
 import ExperimentBoard from '../ExperimentBoard.jsx'
+import ExperimentHistory from './ExperimentHistory.jsx'
 import { FlowEmpty, FlowPageHeading, FlowStatus } from './flowUi.jsx'
+import { comparisonReducer, initialComparison } from './comparisonSet.js'
 import ResultsMatrix from './ResultsMatrix.jsx'
 
 export default function EvidenceHub({
   pageId = 'evidence',
   capabilities,
   api,
+  comparisonRequest,
+  refreshKey,
   postJson,
   liveEvaluation = false,
   focusedConfig,
@@ -20,12 +24,24 @@ export default function EvidenceHub({
   configs = [],
   connections = [],
   experimentId = '',
+  onOpenExperiment,
+  onUseTemplate,
   onReplay,
   t,
 }) {
+  const [comparisonState, onComparisonAction] = useReducer(comparisonReducer, undefined, initialComparison)
+  const [view, setView] = useState('current')
+  const [historySource, setHistorySource] = useState(liveEvaluation ? 'experiments' : 'recorded')
+  const [owningExperimentId, setOwningExperimentId] = useState('')
   const [expandedRunId, setExpandedRunId] = useState(archiveFocusRunId || '')
   const [chartsOpen, setChartsOpen] = useState(Boolean(archiveFocusRunId))
   const expanded = Boolean(expandedRunId)
+  useEffect(() => {
+    if (!experimentId && !comparisonRequest) return
+    setView('current')
+    setExpandedRunId('')
+    setChartsOpen(false)
+  }, [experimentId, comparisonRequest])
   const initialMethods = selectedMethods.length
     ? selectedMethods.map(item => String(item).toLowerCase())
     : focusedConfig?.method
@@ -43,6 +59,11 @@ export default function EvidenceHub({
     if (!id) return
     setExpandedRunId(id)
     setChartsOpen(false)
+    setOwningExperimentId('')
+    if (liveEvaluation) api?.('/api/experiments').then(data => {
+      const owner = (data?.experiments || []).find(experiment => experiment.cells?.some(cell => cell.run_id === id))
+      setOwningExperimentId(owner?.experiment_id || '')
+    }).catch(() => {})
   }
 
   const collapseRun = () => {
@@ -80,6 +101,7 @@ export default function EvidenceHub({
         </div>
         {expanded ? (
           <div className="evidence-hub-toolbar">
+            {owningExperimentId && <button type="button" className="flow-secondary-action" onClick={() => { onOpenExperiment?.(owningExperimentId); setView('current'); collapseRun() }}>{t('plan.backToExperiment')}</button>}
             {chartsOpen ? (
               <button type="button" className="flow-secondary-action" onClick={collapseCharts}>
                 {t('evidence.collapseCharts')}
@@ -95,19 +117,46 @@ export default function EvidenceHub({
       <div className="evidence-hub-body">
         {!expanded ? (
           <>
-          <ResultsMatrix
-            api={api}
-            configs={configs}
-            connections={connections}
-            experimentId={experimentId}
-            sampleLimit={sampleLimit}
-            sampleMode={sampleMode}
-            sampleSeed={sampleSeed}
-            liveEvaluation={liveEvaluation}
-            onOpenRun={expandRun}
-            onReplay={onReplay}
-            t={t}
-          />
+          <nav className="evidence-view-tabs" aria-label={t('plan.resultViews')}>
+            <button type="button" aria-pressed={view === 'current'} onClick={() => setView('current')}>{t('plan.currentExperiment')}</button>
+            <button type="button" aria-pressed={view === 'history'} onClick={() => setView('history')}>{t('history.title')}</button>
+          </nav>
+          {view === 'history' && <nav className="evidence-view-tabs" aria-label={t('plan.historySources')}>
+            {['experiments', 'archive', 'recorded'].filter(source => liveEvaluation || source === 'recorded').map(source => (
+              <button type="button" key={source} aria-pressed={historySource === source} onClick={() => setHistorySource(source)}>{t(`plan.history.${source}`)}</button>
+            ))}
+          </nav>}
+          <div hidden={view !== 'history' || historySource !== 'experiments'}>
+            <ExperimentHistory
+              api={liveEvaluation ? api : undefined}
+              refreshKey={refreshKey}
+              currentExperimentId={experimentId}
+              onOpenExperiment={id => { onOpenExperiment?.(id); setView('current') }}
+              onUseTemplate={onUseTemplate}
+              t={t}
+            />
+          </div>
+          {view === 'current' && liveEvaluation && !experimentId ? <p className="results-note">{t('plan.noCurrentExperiment')}</p> : view === 'history' && historySource === 'experiments' ? null : (
+            <ResultsMatrix
+              comparisonState={comparisonState}
+              onComparisonAction={onComparisonAction}
+              key={`${view}-${historySource}-${experimentId}`}
+              api={api}
+              configs={configs}
+              connections={connections}
+              experimentId={view === 'current' ? experimentId : ''}
+              fixedSource={view === 'current' ? (experimentId ? 'experiment' : 'recorded') : (historySource === 'recorded' ? 'recorded' : 'archive')}
+              sampleLimit={sampleLimit}
+              sampleMode={sampleMode}
+              sampleSeed={sampleSeed}
+              liveEvaluation={liveEvaluation}
+              postJson={postJson}
+              onOpenRun={expandRun}
+              onReplay={onReplay}
+              t={t}
+            />
+          )}
+          <div hidden={view !== 'history' || historySource === 'experiments'}>
           <Archive
             embedded
             mode="browse"
@@ -119,6 +168,7 @@ export default function EvidenceHub({
             onExpandRun={expandRun}
             t={t}
           />
+          </div>
           </>
         ) : (
           <div className="evidence-run-page" data-testid="evidence-run-page">
@@ -147,6 +197,7 @@ export default function EvidenceHub({
                   </button>
                 </header>
                 <ExperimentBoard
+                  t={t}
                   embedded
                   viewOnly
                   capabilities={capabilities}

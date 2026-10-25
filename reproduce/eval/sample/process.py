@@ -134,8 +134,8 @@ def refinement_outcome(ex_before: Optional[int], ex_after: Optional[int]) -> Dic
     return {
         "ex_before": ex_before,
         "ex_after": ex_after,
-        "fix_success": ex_before == 0 and ex_after == 1,
-        "degradation": ex_before == 1 and ex_after == 0,
+        "fix_success": (ex_before == 0 and ex_after == 1) if ex_before in (0, 1) and ex_after in (0, 1) else None,
+        "degradation": (ex_before == 1 and ex_after == 0) if ex_before in (0, 1) and ex_after in (0, 1) else None,
     }
 
 
@@ -274,7 +274,18 @@ def process_summary(per_sample: List[dict], aggregate: Dict[str, Any]) -> Dict[s
     if generation_pass1 is None and generation_oracle is None:
         generation_pass1, generation_oracle = _generation_from_stages(per_sample)
 
+    # Outcome ratios partition observed final outcomes. Unknown EX is excluded,
+    # with coverage and denominator retained; these are offline gold signals.
+    observed = [row for row in per_sample if row.get("ex") == 1 or (row.get("ex") == 0 and "exec_error" in row)]
+    total = len(observed)
+    correct = sum(row.get("ex") == 1 for row in observed)
+    errors = sum(row.get("ex") == 0 and bool(row.get("exec_error")) for row in observed)
     return {
+        "correct_ratio": correct / total if total else None,
+        "incorrect_ratio": (total - correct - errors) / total if total else None,
+        "error_ratio": errors / total if total else None,
+        "outcome_observed": total,
+        "outcome_coverage": total / len(per_sample) if per_sample else None,
         "linking_recall": linking.get("recall"),
         "linking_precision": linking.get("precision"),
         "linking_fatal_miss_rate": linking.get("fatal_miss_rate"),

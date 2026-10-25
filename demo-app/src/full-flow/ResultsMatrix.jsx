@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { SAMPLE_LIMITS, resolveFocusedConfig } from './model.js'
 import { CostScatter, DiffPanel } from './ResultsInsights.jsx'
+import ComparisonPanel from './ComparisonPanel.jsx'
 import { groupedBars, heatmapRows, metricOptions, seriesSlot } from './resultsModel.js'
+import { experimentAxes } from './variantModel.js'
 
 // Recorded evidence shipped with the repository; the public Space opens on it.
 const RECORDED = { limit: 100, mode: 'random', seed: 42 }
@@ -40,7 +42,7 @@ function Heatmap({ matrix, metricId, onOpenRun, t }) {
         <tbody>
           {rows.map(row => (
             <tr key={row.method}>
-              <th scope="row">{row.method}</th>
+              <th scope="row">{row.label}</th>
               {row.cells.map(cell => (
                 <td
                   key={cell.dataset}
@@ -73,6 +75,7 @@ function GroupedBars({ matrix, metricId, allMethods, t }) {
     .filter(group => group.bars.length > 0)
     .map(group => ({ ...group, absent: group.absent.filter(item => item.status !== 'missing') }))
   const plotted = unique(groups.flatMap(group => group.bars.map(bar => bar.method)))
+  const labels = new Map(groups.flatMap(group => group.bars.map(bar => [bar.method, bar.label])))
   if (!plotted.length) return null
   return (
     <figure className="results-bars" data-testid="results-bars">
@@ -82,7 +85,7 @@ function GroupedBars({ matrix, metricId, allMethods, t }) {
           {plotted.map(method => (
             <li key={method}>
               <i data-slot={seriesSlot(method, allMethods)} aria-hidden="true" />
-              {method}
+              {labels.get(method) || method}
             </li>
           ))}
         </ul>
@@ -92,8 +95,8 @@ function GroupedBars({ matrix, metricId, allMethods, t }) {
           <section key={group.dataset} className="results-bar-group" aria-label={group.dataset}>
             <h4>{group.dataset}</h4>
             {group.bars.map(bar => (
-              <div key={bar.method} className="results-bar-row" title={`${bar.method} · ${group.dataset} · ${bar.text}`}>
-                <span className="results-bar-label">{bar.method}</span>
+              <div key={bar.method} className="results-bar-row" title={`${bar.label} · ${group.dataset} · ${bar.text}`}>
+                <span className="results-bar-label">{bar.label}</span>
                 <span className="results-bar-track">
                   <i
                     data-slot={bar.slot}
@@ -105,7 +108,7 @@ function GroupedBars({ matrix, metricId, allMethods, t }) {
             ))}
             {group.absent.length > 0 && (
               <p className="results-bar-absent">
-                {group.absent.map(item => `${item.method}: ${t(`results.status.${item.status}`)}`).join(' · ')}
+                {group.absent.map(item => `${item.label}: ${t(`results.status.${item.status}`)}`).join(' · ')}
               </p>
             )}
           </section>
@@ -120,15 +123,20 @@ export default function ResultsMatrix({
   configs = [],
   connections = [],
   experimentId = '',
+  fixedSource,
+  comparisonState,
+  onComparisonAction,
   sampleLimit = 20,
   sampleMode = 'slice',
   sampleSeed = 42,
   liveEvaluation = false,
+  postJson,
   onOpenRun,
   onReplay,
   t,
 }) {
-  const [source, setSource] = useState(experimentId ? 'experiment' : liveEvaluation ? 'archive' : 'recorded')
+  const [sourceState, setSource] = useState(experimentId ? 'experiment' : liveEvaluation ? 'archive' : 'recorded')
+  const source = fixedSource || sourceState
   const [scope, setScope] = useState(liveEvaluation ? 'selection' : 'all')
   const [sampling, setSampling] = useState(
     liveEvaluation ? { limit: sampleLimit, mode: sampleMode, seed: sampleSeed } : RECORDED,
@@ -137,13 +145,32 @@ export default function ResultsMatrix({
   const [matrix, setMatrix] = useState(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  // A pair the user chose in the benchmark comparison, to open in the question diff.
+  const [diffPair, setDiffPair] = useState(null)
+  // An experiment's columns are its own cells, variants included.
+  const [cellAxes, setCellAxes] = useState(null)
 
   useEffect(() => {
     if (experimentId) setSource('experiment')
   }, [experimentId])
 
-  const allMethods = useMemo(() => unique(configs.map(item => item.method)), [configs])
-  const axes = useMemo(() => axesFor(scope, configs, connections), [scope, configs, connections])
+  useEffect(() => {
+    setCellAxes(null)
+    if (!api || !experimentId) return undefined
+    let active = true
+    api(`/api/experiments/${experimentId}`)
+      .then(experiment => { if (active) setCellAxes(experimentAxes(experiment)) })
+      .catch(() => {})
+    return () => { active = false }
+  }, [api, experimentId])
+
+  const experimentColumns = source === 'experiment' && cellAxes?.methods.length ? cellAxes : null
+  const allMethods = useMemo(
+    () => unique([...configs.map(item => item.method), ...(experimentColumns?.methods || [])]),
+    [configs, experimentColumns],
+  )
+  const selectionAxes = useMemo(() => axesFor(scope, configs, connections), [scope, configs, connections])
+  const axes = experimentColumns || selectionAxes
   const effectiveSampling = source === 'recorded' ? RECORDED : sampling
   const params = useMemo(() => queryString({
     methods: axes.methods.join(','),
@@ -151,6 +178,7 @@ export default function ResultsMatrix({
     ...(source === 'experiment' && experimentId
       ? { experiment_id: experimentId }
       : {
+        source,
         sample_limit: effectiveSampling.limit,
         sample_mode: effectiveSampling.mode,
         sample_seed: effectiveSampling.seed,
@@ -198,21 +226,21 @@ export default function ResultsMatrix({
       </header>
 
       <div className="results-controls" role="group" aria-label={t('results.controls')}>
-        <label>
+        {!fixedSource && <label>
           <span>{t('results.source')}</span>
           <select aria-label={t('results.source')} value={source} onChange={event => setSource(event.target.value)}>
             {experimentId && <option value="experiment">{t('results.sourceExperiment')}</option>}
             {liveEvaluation && <option value="archive">{t('results.sourceArchive')}</option>}
             <option value="recorded">{t('results.sourceRecorded')}</option>
           </select>
-        </label>
-        <label>
+        </label>}
+        {source !== 'experiment' && <label>
           <span>{t('results.scope')}</span>
           <select aria-label={t('results.scope')} value={scope} onChange={event => setScope(event.target.value)}>
             <option value="selection">{t('results.scopeSelection')}</option>
             <option value="all">{t('results.scopeAll')}</option>
           </select>
-        </label>
+        </label>}
         {source === 'archive' && (
           <>
             <label>
@@ -261,7 +289,20 @@ export default function ResultsMatrix({
             metricLabel={metrics.find(item => item.id === activeMetric)?.label || activeMetric}
             t={t}
           />
-          <DiffPanel api={api} matrix={matrix} onReplay={onReplay} t={t} />
+          <ComparisonPanel
+            allMethods={allMethods}
+            comparisonState={comparisonState}
+            onComparisonAction={onComparisonAction}
+            matrix={matrix}
+            source={source}
+            liveEvaluation={liveEvaluation}
+            api={api}
+            postJson={postJson}
+            onOpenRun={onOpenRun}
+            onCompareDiff={(a, b) => setDiffPair({ a, b, stamp: Date.now() })}
+            t={t}
+          />
+          <DiffPanel api={api} matrix={matrix} onReplay={onReplay} pair={diffPair} t={t} />
         </>
       )}
     </section>

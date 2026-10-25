@@ -102,6 +102,22 @@ class QueryByMethodTests(unittest.TestCase):
         self.assertEqual(self.calls[0]["workflow_actor_lis"], expected)
         self.assertEqual(response.json["method"], "c3sql")
 
+    def test_a_variant_replays_with_its_swapped_actor(self):
+        config = next(item for item in api_server._config_catalog() if (item["method"], item["dataset"]) == ("c3sql", "spider"))
+        expected = [
+            "FINSQLGenerator" if stage["id"] == "c3sql_generate" else stage["actor"]
+            for stage in config["stages"] if stage.get("actor")
+        ]
+        response = self.query(method="c3sql", stages={"c3sql_generate": "FINSQLGenerator"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.calls[0]["workflow_actor_lis"], expected)
+        self.assertEqual(response.json["stages"], {"c3sql_generate": "FINSQLGenerator"})
+
+    def test_a_disallowed_swap_is_not_replayed(self):
+        response = self.query(method="c3sql", stages={"c3sql_reduce": "C3SQLGenerator"})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.calls, [])
+
     def test_a_method_without_a_config_for_that_benchmark_is_rejected(self):
         response = self.query(method="no-such-method")
         self.assertEqual(response.status_code, 400)

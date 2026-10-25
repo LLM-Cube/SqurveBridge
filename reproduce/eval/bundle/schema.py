@@ -36,6 +36,7 @@ V1_REQUIRED_TOP_KEYS = frozenset({
 })
 
 V1_OPTIONAL_TOP_KEYS = frozenset({
+    "ex_variant",
     "convergence",
     "workflow_trace",
     "config_snapshot",
@@ -71,6 +72,8 @@ def validate_bundle(scores: dict[str, Any]) -> list[str]:
     problems = []
     if not isinstance(scores, dict):
         return ["bundle must be a dict"]
+    if "ex_variant" in scores and scores["ex_variant"] not in {"spider", "bird", "custom"}:
+        problems.append("invalid ex_variant")
     missing = V1_REQUIRED_TOP_KEYS - scores.keys()
     if missing:
         problems.append(f"missing top-level keys: {sorted(missing)}")

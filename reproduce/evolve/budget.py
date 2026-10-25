@@ -42,7 +42,7 @@ def _promote(
     ranked = sorted(
         [
             node for node in node_list
-            if node.status == "pass" and node.fitness is not None and float(node.fitness) > min_fitness
+            if node.status == "pass" and ("verification" not in node.metadata or node.metadata["verification"].get("accepted")) and node.fitness is not None and float(node.fitness) > min_fitness
         ],
         key=lambda node: (float(node.fitness), -node.branch_id),
         reverse=True,

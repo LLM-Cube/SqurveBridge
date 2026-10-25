@@ -10,16 +10,15 @@ export default function BoardWorkspace({
   sampleLimit,
   sampleMode,
   sampleSeed,
-  onSampleLimitChange,
-  onSampleModeChange,
-  onSampleSeedChange,
   postJson,
   api,
   onRunStateChange,
   onExperimentChange,
   adoptExperimentId = '',
   liveEvaluation = false,
+  variants = [],
   t,
+  ...planProps
 }) {
   return (
     <section id="board" className="flow-module flow-glass board-workspace-flow" data-testid="board-workspace">
@@ -32,6 +31,7 @@ export default function BoardWorkspace({
       </header>
 
       <RunWorkspace
+        {...planProps}
         selectedConnections={selectedConnections}
         configs={configs}
         focusedMethod={focusedMethod}
@@ -41,15 +41,13 @@ export default function BoardWorkspace({
         sampleLimit={sampleLimit}
         sampleMode={sampleMode}
         sampleSeed={sampleSeed}
-        onSampleLimitChange={onSampleLimitChange}
-        onSampleModeChange={onSampleModeChange}
-        onSampleSeedChange={onSampleSeedChange}
         postJson={postJson}
         api={api}
         onRunStateChange={onRunStateChange}
         onExperimentChange={onExperimentChange}
         adoptExperimentId={adoptExperimentId}
         liveEvaluation={liveEvaluation}
+        variants={variants}
         t={t}
       />
     </section>

@@ -26,7 +26,7 @@ class SpaceApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json["deployment"]["target"], "hf-space")
         self.assertTrue(response.json["deployment"]["features"]["live_sql"])
-        self.assertTrue(response.json["deployment"]["features"]["agent_chat"])
+        self.assertFalse(response.json["deployment"]["features"]["agent_chat"])
         self.assertTrue(response.json["deployment"]["features"]["session_sql_auth"])
 
     def test_qwen_sql_credentials_use_only_allowlisted_regions(self):

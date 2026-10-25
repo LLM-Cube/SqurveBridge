@@ -14,6 +14,9 @@ export function metricOptions(matrix) {
   return [...metrics].sort((a, b) => rank(a.id) - rank(b.id))
 }
 
+/** A column's display name: the server labels variants; a plain method is its own label. */
+export const labelOf = (matrix, method) => matrix?.labels?.[method] || method
+
 const cellAt = (matrix, method, dataset) =>
   (matrix?.cells || []).find(item => item.method === method && item.dataset === dataset)
 
@@ -36,6 +39,7 @@ export function heatmapRows(matrix, metricId) {
   const scale = scaleFor(matrix, metricId)
   return (matrix?.methods || []).map(method => ({
     method,
+    label: labelOf(matrix, method),
     cells: (matrix?.datasets || []).map(dataset => {
       const cell = cellAt(matrix, method, dataset)
       const status = cell?.status || 'missing'
@@ -49,7 +53,7 @@ export function heatmapRows(matrix, metricId) {
           value: null,
           step: null,
           text: shown === 'not_computable' ? '—' : shown,
-          tooltip: [method, dataset, reason || shown].join(' · '),
+          tooltip: [labelOf(matrix, method), dataset, reason || shown].join(' · '),
           runId: cell?.run_id || null,
         }
       }
@@ -59,8 +63,8 @@ export function heatmapRows(matrix, metricId) {
         status: 'ok',
         value,
         step: Math.min(HEAT_STEPS - 1, Math.floor(ratio * HEAT_STEPS)),
-        text: formatValue(value, scale),
-        tooltip: [method, dataset, formatValue(value, scale), cell.sample_count ? `n=${cell.sample_count}` : '']
+        text: formatValue(value, scale) + (metricId === 'ex' ? ` · ${cell?.ex_variant || 'custom'}` : ''),
+        tooltip: [labelOf(matrix, method), dataset, formatValue(value, scale), cell.sample_count ? `n=${cell.sample_count}` : '']
           .filter(Boolean).join(' · '),
         runId: cell.run_id || null,
       }
@@ -83,9 +87,19 @@ export function groupedBars(matrix, metricId, allMethods) {
       const cell = cellAt(matrix, method, dataset)
       const value = comparableValue(cell, metricId)
       if (value === null) {
-        absent.push({ method, status: cell?.status === 'ok' ? 'not_computable' : (cell?.status || 'missing') })
+        absent.push({
+          method,
+          label: labelOf(matrix, method),
+          status: cell?.status === 'ok' ? 'not_computable' : (cell?.status || 'missing'),
+        })
       } else {
-        bars.push({ method, value, text: formatValue(value, scale), slot: seriesSlot(method, allMethods) })
+        bars.push({
+          method,
+          label: labelOf(matrix, method),
+          value,
+          text: formatValue(value, scale) + (metricId === 'ex' ? ` · ${cell?.ex_variant || 'custom'}` : ''),
+          slot: seriesSlot(method, allMethods),
+        })
       }
     }
     return { dataset, bars, absent, max: scale.max }
@@ -97,7 +111,7 @@ export function costScatter(matrix, metricId, costKey) {
   const points = []
   const omitted = []
   for (const cell of matrix?.cells || []) {
-    const label = `${cell.method} · ${cell.dataset}`
+    const label = `${labelOf(matrix, cell.method)} · ${cell.dataset}${metricId === 'ex' ? ` · EX ${cell.ex_variant || 'custom'}` : ''}`
     const y = comparableValue(cell, metricId)
     const x = cell?.cost?.[costKey]
     if (y === null || typeof x !== 'number' || !Number.isFinite(x)) {
@@ -121,7 +135,7 @@ export function diffCandidates(matrix) {
   const byDataset = {}
   for (const cell of matrix?.cells || []) {
     if (cell?.status !== 'ok' || !cell.run_id) continue
-    ;(byDataset[cell.dataset] ||= []).push({ method: cell.method, runId: cell.run_id })
+    ;(byDataset[cell.dataset] ||= []).push({ method: cell.method, label: labelOf(matrix, cell.method), runId: cell.run_id })
   }
   return Object.fromEntries(Object.entries(byDataset).filter(([, runs]) => runs.length > 1))
 }

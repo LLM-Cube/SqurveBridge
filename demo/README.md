@@ -38,12 +38,25 @@
 | `SQURVE_DEMO_WEB_PORT` | `5173` | 前端端口 |
 | `PI_AGENT_PROVIDER` | 跟随 `SQURVE_LLM_PROVIDER` | Pi 使用的模型服务 |
 | `PI_AGENT_MODEL` | 跟随 `SQURVE_LLM_MODEL` | Pi 使用的模型 |
+| `SQURVE_DEMO_AGENT` | `off` | 默认隐藏 Agent 面板并拒绝所有 `/api/agent*` 路由；需要对话功能时显式设为 `on` |
 
 示例：
 
 ```bash
 SQURVE_DEMO_WEB_PORT=5174 ./demo/start.sh
 ```
+
+### 展示版（无 Agent）
+
+默认启动即为无 Agent 展示版，重启后仍然隐藏对话面板：
+
+```bash
+./demo/start.sh
+```
+
+需要恢复 Agent 时使用 `SQURVE_DEMO_AGENT=on ./demo/start.sh`（已运行的服务需先停止）。
+
+不需要 Node 的 Pi SDK 即可展示已接入的方法和 benchmark、横向比较，以及在编排页把某个阶段换成同类型的其他 Actor 形成**变体**，与原方法在同一实验中用相同样本运行并对比。变体只改该次运行的配置，`reproduce/configs/` 不会被修改。
 
 ## 前置依赖
 
@@ -118,3 +131,25 @@ lsof -nP -iTCP:5173 -sTCP:LISTEN
 ## 安全边界
 
 API 默认只监听 `127.0.0.1`。本地 Pi 会话可使用读写和命令工具，因此不应把本地服务暴露到不受信任的网络。Hugging Face 部署自动切换为 `hosted-readonly`，只向 Pi 开放 `read`、`grep`、`find` 和 `ls`。
+
+### Showcase without an Agent runtime
+
+The default `SQURVE_DEMO_AGENT=off` hides Agent chat and rejects its API routes.
+`demo/start.sh` skips the embedded Pi SDK when off; Node is still needed for Vite.
+For a prebuilt frontend, `python -m demo.showcase_server --port 7861` serves both
+UI and API with Python only, forces Agent off and never starts Pi or Node.
+Build the frontend once with `npm ci --prefix demo-app` and
+`npm run build --prefix demo-app`. Set `SQURVE_DEMO_AGENT=on` and use the usual
+development launcher only when explicitly enabling the Agent runtime.
+
+### 真实运行指标记录
+
+演示页的「演示」步骤展示一份由真实运行构建的指标记录（`demo-app/src/full-flow/showcaseRecord.js`）。
+记录只含聚合指标、逐题对错和匿名序号，不含题目、SQL、日志或绝对路径；原始评分包留在本地
+`workspace/` 下。每个方法带有效性判定：空预测或仅含 `SELECT` 的预测占比达到 20% 即判无效，
+无效运行保留在记录中但不参与排名与对比。
+
+```bash
+# 原始运行按 <批次>/<方法>/ 放在本地目录，例如 workspace/showcase-runs/<日期>/
+.venv/bin/python demo/showcase_record.py workspace/showcase-runs/<日期> demo-app/src/full-flow/showcaseRecord.js --batch n50   # 只记录 50 题切片；省略 --batch 则记录目录下全部批次
+```

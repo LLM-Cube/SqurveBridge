@@ -23,6 +23,23 @@ Open `http://127.0.0.1:5173`. Stop the services with `./demo/stop.sh`.
 The API binds to `127.0.0.1` by default. This is a local research interface; do not
 expose it directly to an untrusted network.
 
+## Showcase without the Agent
+
+The Agent is disabled by default, including after a restart:
+
+```bash
+./demo/start.sh
+```
+
+To enable it explicitly, stop the running demo and use
+`SQURVE_DEMO_AGENT=on ./demo/start.sh`.
+
+The server then refuses every `/api/agent*` route and the page drops the Agent
+pane. Integrated methods and benchmarks, side-by-side comparison and Actor swaps
+still work: in Compose, swap a stage to another Actor of the same type to make a
+**variant** that runs next to its method on the same samples. A variant changes
+only that run's config; `reproduce/configs/` is never modified.
+
 ## Credentials
 
 Copy `.env.example` to `.env` at the repository root and set the provider key used

@@ -1,5 +1,7 @@
 /** Pure helpers for the interactive Query workspace. */
 
+import { DATABASES, configKey } from './model.js'
+
 const SQL_KEYWORDS = new Set([
   'select', 'from', 'where', 'group', 'order', 'by', 'having', 'join', 'inner',
   'left', 'right', 'outer', 'cross', 'on', 'as', 'and', 'or', 'not', 'in',
@@ -200,4 +202,58 @@ export function exampleQuestions(table, t) {
   const column = (table.columns || []).find(item => item?.name)
   if (column) examples.push(t('query.exampleDistinct', { table: table.name, column: column.name }))
   return examples
+}
+
+const benchmarkKey = id => configKey('x', id)
+
+/**
+ * Databases grouped by the benchmark they belong to, in Compose's benchmark
+ * order and with Compose's names; anything else (uploads) comes last.
+ * Database names drop the `<benchmark>__` prefix some ids carry.
+ */
+export function databaseGroups(databases) {
+  const byBenchmark = new Map()
+  for (const database of databases || []) {
+    const id = database.benchmark || ''
+    if (!byBenchmark.has(id)) byBenchmark.set(id, [])
+    byBenchmark.get(id).push({
+      id: database.id,
+      name: id && String(database.id).startsWith(`${id}__`) ? String(database.id).slice(id.length + 2) : database.id,
+    })
+  }
+  const rank = id => {
+    const index = DATABASES.findIndex(name => benchmarkKey(name) === benchmarkKey(id))
+    return index < 0 ? DATABASES.length : index
+  }
+  return [...byBenchmark.entries()]
+    .sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b))
+    .map(([id, items]) => ({
+      id,
+      label: DATABASES.find(name => benchmarkKey(name) === benchmarkKey(id)) || id || null,
+      databases: items.sort((a, b) => a.name.localeCompare(b.name)),
+    }))
+}
+
+/** The group a database belongs to, else the one matching Compose's focus, else the first. */
+export function initialBenchmark(groups, selectedDb, focusedDatabase) {
+  const owner = groups.find(group => group.databases.some(item => item.id === selectedDb))
+  if (owner) return owner.id
+  const focused = groups.find(group => group.id && benchmarkKey(group.id) === benchmarkKey(focusedDatabase))
+  return (focused || groups[0])?.id ?? ''
+}
+
+// A well-known database to open a benchmark on, where alphabetical order would pick an obscure one.
+const PREFERRED_DATABASES = { spider: 'concert_singer' }
+
+export function defaultDatabase(group) {
+  const preferred = PREFERRED_DATABASES[group?.id]
+  const databases = group?.databases || []
+  return (databases.find(item => item.id === preferred) || databases[0])?.id || ''
+}
+
+/** A benchmark's databases whose name contains the term; the selected one always stays listed. */
+export function filterDatabases(databases, term, selectedDb = '') {
+  const needle = String(term || '').trim().toLowerCase()
+  if (!needle) return databases || []
+  return (databases || []).filter(item => item.id === selectedDb || item.name.toLowerCase().includes(needle))
 }

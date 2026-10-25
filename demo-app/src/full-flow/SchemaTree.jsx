@@ -1,4 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { databaseGroups, defaultDatabase, filterDatabases, initialBenchmark } from './queryModel.js'
+
+// Below this many databases a plain list is easy enough to scan.
+const FILTER_THRESHOLD = 12
 
 const matches = (value, term) => String(value || '').toLowerCase().includes(term)
 
@@ -24,6 +28,7 @@ export default function SchemaTree({
   databases = [],
   selectedDb = '',
   onSelectDb,
+  focusedDatabase = '',
   schema = null,
   hits = null,
   hitsDismissed = false,
@@ -38,15 +43,27 @@ export default function SchemaTree({
   const normalizedTerm = term.trim().toLowerCase()
   const searching = normalizedTerm.length > 0
 
-  const groups = useMemo(() => {
-    const byBenchmark = new Map()
-    for (const database of databases) {
-      const key = database.benchmark || 'other'
-      if (!byBenchmark.has(key)) byBenchmark.set(key, [])
-      byBenchmark.get(key).push(database)
-    }
-    return [...byBenchmark.entries()]
-  }, [databases])
+  // Pick a benchmark first, then one of its databases.
+  const groups = useMemo(() => databaseGroups(databases), [databases])
+  const [benchmark, setBenchmark] = useState(() => initialBenchmark(groups, selectedDb, focusedDatabase))
+  const activeGroup = groups.find(group => group.id === benchmark) || null
+  const [databaseTerm, setDatabaseTerm] = useState('')
+  const listedDatabases = filterDatabases(activeGroup?.databases, databaseTerm, selectedDb)
+
+  useEffect(() => {
+    // Follow a database chosen elsewhere (a replay) and fill in once databases load.
+    const owner = groups.find(group => group.databases.some(item => item.id === selectedDb))
+    if (owner && owner.id !== benchmark) setBenchmark(owner.id)
+    else if (!activeGroup && groups.length) setBenchmark(initialBenchmark(groups, selectedDb, focusedDatabase))
+  }, [groups, selectedDb])
+
+  // Switching benchmark opens its first database, so the schema always matches the picker.
+  const chooseBenchmark = next => {
+    setBenchmark(next)
+    setDatabaseTerm('')
+    const opening = defaultDatabase(groups.find(group => group.id === next))
+    if (opening && opening !== selectedDb) onSelectDb?.(opening)
+  }
 
   const tables = schema?.tables || []
   const visibleTables = useMemo(() => {
@@ -104,25 +121,56 @@ export default function SchemaTree({
         </button>
       </header>
 
-      <label className="query-schema-database">
-        <span>{t('query.database')}</span>
-        <select
-          value={selectedDb}
-          aria-label={t('query.database')}
-          onChange={event => onSelectDb?.(event.target.value)}
-        >
-          <option value="">{t('query.selectDatabase')}</option>
-          {groups.map(([benchmark, items]) => (
-            <optgroup key={benchmark} label={benchmark}>
-              {items.map(database => (
-                <option key={database.id} value={database.id}>
-                  {database.id}
-                </option>
-              ))}
-            </optgroup>
+      <div className="query-schema-field">
+        <span className="query-schema-label">{t('query.benchmark')}</span>
+        <div className="query-schema-chips" role="group" aria-label={t('query.benchmark')}>
+          {groups.map(group => (
+            <button
+              key={group.id || 'other'}
+              type="button"
+              className="query-schema-chip"
+              aria-pressed={group.id === activeGroup?.id}
+              onClick={() => chooseBenchmark(group.id)}
+            >
+              <b>{group.label || t('query.otherDatabases')}</b>
+              <small>{group.databases.length}</small>
+            </button>
           ))}
-        </select>
-      </label>
+        </div>
+      </div>
+
+      {(activeGroup?.databases.length || 0) > FILTER_THRESHOLD ? (
+        <input
+          type="search"
+          className="query-schema-search"
+          value={databaseTerm}
+          placeholder={t('query.filterDatabases', { count: activeGroup.databases.length })}
+          aria-label={t('query.filterDatabasesLabel')}
+          onChange={event => setDatabaseTerm(event.target.value)}
+        />
+      ) : null}
+
+      <div className="query-schema-field">
+        <span className="query-schema-label">
+          {t('query.database')}
+          {databaseTerm.trim() ? ` · ${t('query.databaseMatches', { count: listedDatabases.length })}` : ''}
+        </span>
+        <div className="query-schema-list" role="listbox" aria-label={t('query.database')}>
+          {listedDatabases.map(database => (
+            <button
+              key={database.id}
+              type="button"
+              role="option"
+              data-id={database.id}
+              aria-selected={database.id === selectedDb}
+              className="query-schema-option"
+              onClick={() => onSelectDb?.(database.id)}
+            >
+              {database.name}
+            </button>
+          ))}
+        </div>
+      </div>
 
       {selectedDb && (
         <input

@@ -133,13 +133,17 @@ command -v curl >/dev/null 2>&1 || die "curl not found."
 "${PYTHON}" "${ROOT}/demo/runtime_check.py" || die \
   "Python runtime check failed. Install: uv sync --python ${PYTHON}"
 
-node_major="$(node -p 'process.versions.node.split(".")[0]')"
-[[ "${node_major}" -ge 22 ]] || die "Embedded Pi requires Node.js 22.19 or newer."
-
-if [[ ! -d "${ROOT}/demo/node_modules/@earendil-works/pi-coding-agent/dist" ]]; then
-  log "Installing embedded Pi SDK…"
-  bash "${ROOT}/demo/build_embedded_pi.sh"
-fi
+case "$(printf '%s' "${SQURVE_DEMO_AGENT:-off}" | tr '[:upper:]' '[:lower:]')" in
+  off|0|false|no) log "Showcase mode: skipping embedded Pi SDK setup." ;;
+  *)
+    node_major="$(node -p 'process.versions.node.split(".")[0]')"
+    [[ "${node_major}" -ge 22 ]] || die "Embedded Pi requires Node.js 22.19 or newer."
+    if [[ ! -d "${ROOT}/demo/node_modules/@earendil-works/pi-coding-agent/dist" ]]; then
+      log "Installing embedded Pi SDK…"
+      bash "${ROOT}/demo/build_embedded_pi.sh"
+    fi
+    ;;
+esac
 
 if [[ ! -d "${ROOT}/demo-app/node_modules" ]]; then
   log "Installing frontend dependencies (npm ci)…"
@@ -179,6 +183,9 @@ trap - EXIT
 log "SqurveBridge demo is up."
 log "  Workspace: http://${WEB_HOST}:${WEB_PORT}"
 log "  API:       http://${API_HOST}:${API_PORT}"
-log "  Agent:     embedded Pi (${PI_AGENT_PROVIDER:-${SQURVE_LLM_PROVIDER:-auto}}/${PI_AGENT_MODEL:-${SQURVE_LLM_MODEL:-auto}})"
+case "$(printf '%s' "${SQURVE_DEMO_AGENT:-off}" | tr '[:upper:]' '[:lower:]')" in
+  off|0|false|no) log "  Agent:     off (SQURVE_DEMO_AGENT)" ;;
+  *) log "  Agent:     embedded Pi (${PI_AGENT_PROVIDER:-${SQURVE_LLM_PROVIDER:-auto}}/${PI_AGENT_MODEL:-${SQURVE_LLM_MODEL:-auto}})" ;;
+esac
 log "  Logs:      ${RUNTIME_DIR}/api.log , ${RUNTIME_DIR}/web.log"
 log "Stop with:   demo/stop.sh"

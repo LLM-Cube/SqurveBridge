@@ -1,3 +1,5 @@
+import DashboardMetrics from './DashboardMetrics.jsx'
+import defaultMessages from './i18n/en-US.js'
 import { useEffect, useMemo, useState } from 'react'
 
 const METHOD_COLORS = ['#3f9e68', '#2e7fa3', '#b07a1f', '#c04a40', '#6a55d0', '#3f7d7a']
@@ -882,6 +884,7 @@ function HostedEvaluationControls({ enabled, children }) {
 
 export default function ExperimentBoard({
   capabilities,
+  t = key => defaultMessages[key] || key,
   liveEvaluation = true,
   api,
   postJson,
@@ -1071,7 +1074,7 @@ export default function ExperimentBoard({
   const runs = payload?.runs || []
   const alignment = payload?.sample_alignment
   const context = `${dataset} · ${split} · ${sampleMode} ${sampleLimit}${sampleMode === 'random' ? ` · seed ${sampleSeed}` : ''}`
-  const insights = useMemo(() => buildInsights(runs, context), [runs, context])
+  const insights = useMemo(() => alignment?.aligned ? buildInsights(runs, context) : [], [runs, context, alignment?.aligned])
   const tabs = [
     ['compare', 'Amplified compare'],
     ['formal', 'Formal tables'],
@@ -1174,12 +1177,12 @@ export default function ExperimentBoard({
         </section>
       ) : (
         <div className="board-body">
-          <section className="insight-banner">
+          {insights.length > 0 && section !== 'compare' && <section className="insight-banner">
             <div className="insight-kicker">Reading</div>
             <ol>
               {insights.map(line => <li key={line}>{line}</li>)}
             </ol>
-          </section>
+          </section>}
 
           <div className="board-tabs" role="tablist" aria-label="Board sections">
             {tabs.map(([id, label], index) => (
@@ -1189,46 +1192,7 @@ export default function ExperimentBoard({
             ))}
           </div>
 
-          {section === 'compare' && (
-            <div className="board-stack">
-              <div className="board-hero">
-                <section className="tool-panel board-panel">
-                  <div className="panel-title"><div><span>Zoomed quality radar</span><small>Axes cropped to observed range</small></div></div>
-                  <RadarChart runs={runs} />
-                </section>
-                <section className="tool-panel board-panel">
-                  <div className="panel-title"><div><span>EX gap to leader</span><small>Absolute percentage-point deficit</small></div></div>
-                  <GapBars runs={runs} metric="ex" label="EX" />
-                </section>
-              </div>
-
-              <section className="tool-panel board-panel board-panel-wide">
-                <div className="panel-title"><div><span>Leaderboard</span><small>Quality · latency · token availability</small></div></div>
-                <LeaderboardTable runs={runs} />
-              </section>
-
-              <div className="board-split">
-                <section className="tool-panel board-panel">
-                  <div className="panel-title"><div><span>Delta heatmap</span><small>Every metric vs best method</small></div></div>
-                  <DeltaHeatmap runs={runs} />
-                </section>
-                <section className="tool-panel board-panel">
-                  <div className="panel-title"><div><span>Latency contrast</span><small>Mean / p95 from per-sample act time</small></div></div>
-                  <LatencyBars runs={runs} />
-                </section>
-              </div>
-
-              <section className="tool-panel board-panel board-panel-wide">
-                <div className="panel-title"><div><span>Component F1</span><small>Structural gaps amplified</small></div></div>
-                <ComponentF1Bars runs={runs} />
-              </section>
-
-              <section className="tool-panel board-panel board-panel-wide">
-                <div className="panel-title"><div><span>Scenario slices</span><small>Hard subsets where methods diverge</small></div></div>
-                <ScenarioCards runs={runs} />
-              </section>
-            </div>
-          )}
+          {section === 'compare' && <DashboardMetrics runs={runs} alignment={alignment} t={t} />}
 
           {section === 'formal' && (
             <div className="board-stack">

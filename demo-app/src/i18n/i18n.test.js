@@ -5,10 +5,15 @@ import { detectLocale, translate } from './index.js'
 import enUS from './en-US.js'
 import zhCN from './zh-CN.js'
 
-test('detects Chinese only for zh browser locales and honors stored locale', () => {
-  assert.equal(detectLocale('zh-CN', null), 'zh-CN')
-  assert.equal(detectLocale('en-US', null), 'en-US')
-  assert.equal(detectLocale('en-US', 'zh-CN'), 'zh-CN')
+test('defaults to Chinese when nothing is stored', () => {
+  assert.equal(detectLocale(''), 'zh-CN')
+  assert.equal(detectLocale(undefined), 'zh-CN')
+})
+
+test('a stored locale beats the Chinese default', () => {
+  assert.equal(detectLocale('en-US'), 'en-US')
+  assert.equal(detectLocale('zh-CN'), 'zh-CN')
+  assert.equal(detectLocale('fr-FR'), 'zh-CN', 'unsupported stored values fall back to Chinese')
 })
 
 test('translates parameters and falls back to English', () => {

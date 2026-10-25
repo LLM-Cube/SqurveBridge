@@ -7,7 +7,7 @@ import { installTestDom } from '../testDom.js'
 
 const closeDom = installTestDom()
 globalThis.React = React
-const { cleanup, render, screen, waitFor } = await import('@testing-library/react')
+const { act, cleanup, render, screen, waitFor } = await import('@testing-library/react')
 const userEvent = (await import('@testing-library/user-event')).default
 registerLoader('../cssTestLoader.mjs', import.meta.url)
 const unregister = register()
@@ -55,6 +55,7 @@ const translations = {
   'run.checkpointReady': 'Resumable',
   'run.resumeHint': 'Checkpoint ready · resume {count}/{max} · same as {command}',
   'run.sampleUnit': 'samples',
+  'plan.summary': '{cells} cells · {variants} variants · {limit} questions each · {questions} questions in total',
   'run.samplesStarted': '{count} samples started',
   'run.waiting': 'Waiting to run',
   'run.unavailable': 'This configuration is unavailable.',
@@ -133,13 +134,71 @@ test.after(() => {
   closeDom()
 })
 
-test('launches reproduce/run.py through evaluations for one Compose connection', async () => {
+test('a failed experiment cell resumes through its experiment without losing its identity', async () => {
+  const calls = []
+  const snapshot = status => ({ experiment_id: 'exp-resume', status, sampling: { limit: 20, mode: 'slice', seed: 42 }, cells: [{ cell_id: 'c1', method: 'dinsql', dataset: 'spider', job_id: 'job-cell', status }] })
+  renderRun({
+    adoptExperimentId: 'exp-resume',
+    api: async path => path === '/api/experiments/exp-resume' ? snapshot('failed') : path === '/api/evaluations/job-cell' ? { job_id: 'job-cell', status: 'failed', checkpoint_present: true, resumable: true } : {},
+    postJson: async (path, body) => { calls.push([path, body]); return snapshot('running') },
+  })
+  await waitFor(() => assert.equal(screen.getByTestId('run-resume-action').disabled, false))
+  await userEvent.setup().click(screen.getByTestId('run-resume-action'))
+  assert.deepEqual(calls, [['/api/experiments/exp-resume/cells/c1/resume', {}]])
+})
+
+test('a late session response cannot replace an adopted experiment', async () => {
+  let resolveSession
+  const api = async path => path === '/api/session' ? new Promise(resolve => { resolveSession = resolve }) : path === '/api/experiments/exp-adopt' ? {
+    experiment_id: 'exp-adopt', status: 'running', cells: [{ cell_id: 'c1', method: 'dinsql', dataset: 'spider', status: 'running', job_id: 'job-adopt' }],
+  } : {}
+  const { rerender } = renderRun({ api })
+  rerender(React.createElement(RunWorkspace, {
+    selectedConnections: [{ method: 'DINSQL', database: 'Spider' }], configs: [baseConfig], databases: [],
+    api, adoptExperimentId: 'exp-adopt', liveEvaluation: true, t,
+  }))
+  await waitFor(() => assert.match(screen.getByTestId('run-batch-monitor').textContent, /dinsql \/ spider/))
+  await act(async () => resolveSession({ jobs: [{ job_id: 'unrelated-job', method: 'unrelated', dataset: 'other', status: 'completed' }] }))
+  assert.doesNotMatch(screen.getByTestId('run-batch-monitor').textContent, /unrelated/)
+})
+
+test('successful cell resumes remain visible when a later resume is refused', async () => {
+  const snapshot = {
+    experiment_id: 'exp-partial', status: 'partial',
+    cells: [
+      { cell_id: 'c0', method: 'done', dataset: 'spider', job_id: 'job-done', status: 'completed' },
+      { cell_id: 'c1', method: 'first', dataset: 'spider', status: 'cancelled' },
+      { cell_id: 'c2', method: 'second', dataset: 'spider', status: 'cancelled' },
+    ],
+  }
+  const observed = []
+  renderRun({
+    adoptExperimentId: 'exp-partial', onExperimentSnapshot: value => observed.push(value),
+    api: async path => path === '/api/experiments/exp-partial' ? snapshot : {},
+    postJson: async path => {
+      if (path.endsWith('/c2/resume')) throw new Error('All run slots are busy')
+      return { ...snapshot, status: 'running', cells: snapshot.cells.map(cell => cell.cell_id === 'c1' ? { ...cell, status: 'running', job_id: 'job-resumed' } : cell) }
+    },
+  })
+  await waitFor(() => assert.equal(screen.getByTestId('run-resume-action').disabled, false))
+  await userEvent.setup().click(screen.getByTestId('run-resume-action'))
+  assert.ok(observed.some(value => value.cells.some(cell => cell.job_id === 'job-resumed' && cell.status === 'running')))
+  assert.match(screen.getByTestId('run-batch-monitor').textContent, /first \/ spiderrunning/)
+  assert.match((await screen.findByRole('alert')).textContent, /All run slots are busy/)
+})
+
+test('a single Compose connection runs as a one-cell experiment', async () => {
   const calls = []
   const states = []
   renderRun({
     postJson: async (path, body) => {
       calls.push([path, body])
-      return { job_id: 'job-1', method: 'dinsql', dataset: 'spider', status: 'running' }
+      return {
+        experiment_id: 'exp-single',
+        status: 'running',
+        sampling: body.sampling,
+        cells: [{ cell_id: 'c1', method: 'dinsql', dataset: 'spider', job_id: 'job-1', status: 'running', progress: {} }],
+      }
     },
     onRunStateChange: state => states.push(state),
   })
@@ -152,13 +211,10 @@ test('launches reproduce/run.py through evaluations for one Compose connection',
   await user.click(screen.getByRole('button', { name: 'Run config' }))
 
   assert.deepEqual(calls, [[
-    '/api/evaluations',
+    '/api/experiments',
     {
-      sample_limit: 20,
-      sample_mode: 'slice',
-      sample_seed: 42,
-      dataset: 'spider',
-      method: 'dinsql',
+      cells: [{ method: 'dinsql', dataset: 'spider' }],
+      sampling: { limit: 20, mode: 'slice', seed: 42 },
     },
   ]])
   assert.ok(screen.getByTestId('run-batch-monitor'))
@@ -208,6 +264,38 @@ test('launches one experiment for multiple Compose connections across benchmarks
   assert.match(monitor, /c3sql \/ bird/)
   assert.match(monitor, /queued/)
   assert.deepEqual(experiments, ['exp-1'])
+})
+
+test('a variant runs as its own experiment cell next to the method', async () => {
+  const calls = []
+  const swap = { generate: 'C3SQLGenerator' }
+  renderRun({
+    variants: [{ method: 'dinsql', dataset: 'spider', stages: swap }],
+    postJson: async (path, body) => {
+      calls.push([path, body])
+      return {
+        experiment_id: 'exp-2',
+        status: 'running',
+        sampling: body.sampling,
+        cells: [
+          { cell_id: 'c1', method: 'dinsql', dataset: 'spider', label: 'dinsql', job_id: 'job-1', status: 'running', progress: {} },
+          {
+            cell_id: 'c2', method: 'dinsql', dataset: 'spider', label: 'dinsql · generate→C3SQLGenerator',
+            stages: swap, job_id: 'job-2', status: 'running', progress: {},
+          },
+        ],
+      }
+    },
+  })
+  assert.match(screen.getByTestId('run-variants').textContent, /dinsql · generate→C3SQLGenerator \/ spider/)
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Run config' }))
+
+  assert.equal(calls[0][0], '/api/experiments', 'one connection plus a variant is an experiment')
+  assert.deepEqual(calls[0][1].cells, [
+    { method: 'dinsql', dataset: 'spider' },
+    { method: 'dinsql', dataset: 'spider', stages: swap },
+  ])
+  assert.match(screen.getByTestId('run-batch-monitor').textContent, /dinsql · generate→C3SQLGenerator \/ spider/)
 })
 
 test('jobsFromExperiment keeps live job detail and lists queued cells in order', () => {
@@ -438,7 +526,7 @@ test('visualizes completed job score-bundle artifacts in the run monitor', async
 
   const panel = await screen.findByTestId('run-artifact-panel')
   assert.match(panel.textContent, /90\.0%/)
-  assert.match(panel.textContent, /Component F1/)
+  assert.match(panel.textContent, /dashboard.structure/)
   assert.match(panel.textContent, /schema_link/)
   assert.match(panel.textContent, /session:spider-c3sql-job-done\/scores\.json/)
 })
@@ -557,4 +645,34 @@ test('sanitizes supported credential forms while preserving benign technical tex
   assert.equal(sanitized.includes('oauth-secret'), false)
   assert.equal(sanitized.includes('sk_test_51LeakTokenValue'), false)
   assert.match(sanitized, /SQLite syntax error near SELECT at line 4/)
+})
+
+test('the run page states what the plan will execute before it is sent', () => {
+  renderRun({
+    selectedConnections: [
+      { method: 'DINSQL', database: 'Spider' },
+      { method: 'C3SQL', database: 'BIRD' },
+    ],
+    configs: [baseConfig, { method: 'c3sql', dataset: 'bird', config_path: 'x', stages: [] }],
+    variants: [{ method: 'dinsql', dataset: 'spider', stages: { generate: 'C3SQLGenerator' } }],
+  })
+  assert.equal(
+    screen.getByTestId('run-plan-summary').textContent,
+    '3 cells · 1 variants · 20 questions each · 60 questions in total',
+  )
+})
+
+test('a refused experiment names each cell and the reason, so the user can go back and fix it', async () => {
+  const error = Object.assign(new Error('Some cells cannot run yet: C3SQL/BIRD (credential_missing).'), {
+    cells: [{ method: 'C3SQL', dataset: 'BIRD', error_code: 'credential_missing' }],
+  })
+  renderRun({
+    selectedConnections: [{ method: 'C3SQL', database: 'BIRD' }],
+    configs: [{ method: 'c3sql', dataset: 'bird', config_path: 'x', stages: [] }],
+    postJson: async () => { throw error },
+  })
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Run config' }))
+  const rejections = await screen.findByTestId('run-rejections')
+  assert.match(rejections.textContent, /C3SQL \/ BIRD/)
+  assert.match(rejections.textContent, /credential_missing/)
 })

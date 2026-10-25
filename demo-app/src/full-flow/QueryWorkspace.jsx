@@ -13,10 +13,12 @@ import {
   pushQuestionHistory,
   schemaToCompletion,
   stagesFromTrace,
+  databaseGroups,
+  defaultDatabase,
+  initialBenchmark,
 } from './queryModel.js'
 
 const PLACEHOLDER_STEP_MS = 900
-const labelSlug = value => String(value || '').trim().toLowerCase().replace(/[_\s]+/g, '-')
 
 const stageStatusLabel = (status, t) => (
   status === 'failed'
@@ -174,6 +176,7 @@ export default function QueryWorkspace({
   const [question, setQuestion] = useState('')
   // Set when a question is replayed from the comparison: run it with that method's workflow.
   const [replayMethod, setReplayMethod] = useState('')
+  const [replayStages, setReplayStages] = useState({})
   const [history, setHistory] = useState(() => loadQuestionHistory())
   const [mode, setMode] = useState('direct')
   const [generator, setGenerator] = useState('')
@@ -244,9 +247,9 @@ export default function QueryWorkspace({
 
   useEffect(() => {
     if (selectedDb || databases.length === 0) return
-    const preferred = labelSlug(focusedDatabase)
-    const match = databases.find(item => item.benchmark === preferred) || databases[0]
-    if (match) setSelectedDb(match.id)
+    const groups = databaseGroups(databases)
+    const opening = defaultDatabase(groups.find(group => group.id === initialBenchmark(groups, '', focusedDatabase)))
+    if (opening) setSelectedDb(opening)
   }, [databases, selectedDb, focusedDatabase])
 
   useEffect(() => {
@@ -276,6 +279,7 @@ export default function QueryWorkspace({
     if (databases.some(item => item.id === prefill.dbId)) setSelectedDb(prefill.dbId)
     if (prefill.question) setQuestion(prefill.question)
     setReplayMethod(prefill.method || '')
+    setReplayStages(prefill.stages || {})
   }, [prefill?.id])
 
   useEffect(() => {
@@ -356,6 +360,7 @@ export default function QueryWorkspace({
     if (mode === 'workflow') payload.actors = requestActors
     else payload.generator = generator
     if (replayMethod) payload.method = replayMethod
+    if (replayMethod && Object.keys(replayStages).length) payload.stages = replayStages
     if (credentialMode === 'local' && sqlAuth?.provider) {
       payload.provider = sqlAuth.provider
       if (sqlAuth.model) payload.model = sqlAuth.model
@@ -522,6 +527,7 @@ export default function QueryWorkspace({
           databases={databases}
           selectedDb={selectedDb}
           onSelectDb={setSelectedDb}
+          focusedDatabase={focusedDatabase}
           schema={schemaEntry}
           hits={hits}
           hitsDismissed={hitsDismissed}
@@ -791,7 +797,7 @@ export default function QueryWorkspace({
           {genError && (
             <div className="query-error" role="alert">
               <p>{genError}</p>
-              <button type="button" onClick={askPi}>{t('query.askPi')}</button>
+              {onAskPi ? <button type="button" onClick={askPi}>{t('query.askPi')}</button> : null}
             </div>
           )}
 
@@ -806,7 +812,7 @@ export default function QueryWorkspace({
                     <button type="button" onClick={() => setSql(baselineSql)}>{t('query.sqlReset')}</button>
                   )}
                   <button type="button" onClick={() => copyText(sql, t('query.sqlCopied'))}>{t('query.sqlCopy')}</button>
-                  <button type="button" onClick={askPi}>{t('query.askPi')}</button>
+                  {onAskPi ? <button type="button" onClick={askPi}>{t('query.askPi')}</button> : null}
                   <button
                     type="button"
                     className="query-execute"
@@ -847,7 +853,7 @@ export default function QueryWorkspace({
               {execError ? (
                 <div className="query-error" role="alert">
                   <p>{execError}</p>
-                  <button type="button" onClick={askPi}>{t('query.askPi')}</button>
+                  {onAskPi ? <button type="button" onClick={askPi}>{t('query.askPi')}</button> : null}
                 </div>
               ) : (
                 <ResultsTable

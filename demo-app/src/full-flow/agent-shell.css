@@ -1179,6 +1179,11 @@ body.agent-shell-resizing .agent-shell-divider-ghost {
   grid-template-columns: 64px 10px minmax(0, 1fr);
 }
 
+/* Showcase deployment: no Agent, so the workspace takes the whole width. */
+.agent-off .agent-shell-panes {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .dashboard-collapsed .agent-dashboard-pane {
   display: none;
 }
@@ -1276,6 +1281,10 @@ body.agent-shell-resizing .agent-shell-divider-ghost {
     padding: 48px 8px 8px;
   }
 
+  .agent-off .agent-shell-panes {
+    padding-top: 8px;
+  }
+
   .agent-dashboard-pane,
   .agent-chat-column {
     width: 100%;
@@ -1358,3 +1367,60 @@ body.agent-shell-resizing .agent-shell-divider-ghost {
 .pi-proposal-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .pi-proposal[data-status="dismissed"] { opacity: .6; }
 .pi-proposal small { color: #6b6152; }
+
+/* The experiment page: compose → run → compare & history in one column. */
+.experiment-page {
+  display: grid;
+  gap: 24px;
+}
+
+.experiment-section {
+  display: grid;
+  gap: 16px;
+  scroll-margin-top: 56px;
+}
+
+.experiment-section-nav {
+  position: sticky;
+  /* The scroll body has 14px padding; pull the bar flush to its top edge. */
+  top: -14px;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: -14px -14px 0;
+  padding: 8px 14px;
+  background: var(--shell-panel);
+  border-bottom: 1px solid var(--shell-border);
+}
+
+.experiment-section-nav button {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--shell-border);
+  border-radius: 999px;
+  padding: 6px 14px;
+  color: var(--shell-muted);
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.experiment-section-nav button span {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--shell-text);
+  background: var(--shell-border);
+  font-size: 11px;
+}
+
+.experiment-section-nav button[aria-current="step"] {
+  color: var(--shell-text);
+  border-color: var(--shell-text);
+  font-weight: 600;
+}

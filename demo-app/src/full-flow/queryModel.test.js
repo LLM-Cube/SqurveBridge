@@ -14,6 +14,10 @@ import {
   pushQuestionHistory,
   schemaToCompletion,
   stagesFromTrace,
+  databaseGroups,
+  defaultDatabase,
+  filterDatabases,
+  initialBenchmark,
 } from './queryModel.js'
 
 const SCHEMA = [
@@ -161,4 +165,55 @@ test('schemaToCompletion shapes tables for lang-sql completion', () => {
     singer: ['singer_id', 'name', 'country'],
     concert: ['concert_id', 'name'],
   })
+})
+
+test('databases are grouped under their benchmark in Compose order and names', () => {
+  const groups = databaseGroups([
+    { id: 'concert_singer', benchmark: 'spider' },
+    { id: 'my_upload' },
+    { id: 'bird__formula_1', benchmark: 'bird' },
+    { id: 'aan_1', benchmark: 'spider' },
+    { id: 'ehr', benchmark: 'ehrsql-2024' },
+  ])
+  assert.deepEqual(groups.map(group => [group.id, group.label]), [
+    ['spider', 'Spider'],
+    ['bird', 'BIRD'],
+    ['ehrsql-2024', 'EHRSQL-2024'],
+    ['', null],
+  ])
+  assert.deepEqual(groups[0].databases.map(item => item.name), ['aan_1', 'concert_singer'])
+  assert.deepEqual(groups[1].databases, [{ id: 'bird__formula_1', name: 'formula_1' }], 'the benchmark prefix is dropped from the name only')
+})
+
+test('the first benchmark shown owns the selected database, else follows Compose focus', () => {
+  const groups = databaseGroups([
+    { id: 'concert_singer', benchmark: 'spider' },
+    { id: 'bird__formula_1', benchmark: 'bird' },
+  ])
+  assert.equal(initialBenchmark(groups, 'bird__formula_1', 'Spider'), 'bird')
+  assert.equal(initialBenchmark(groups, '', 'BIRD'), 'bird')
+  assert.equal(initialBenchmark(groups, '', 'Unknown'), 'spider')
+  assert.equal(initialBenchmark([], '', 'Spider'), '')
+})
+
+test('a benchmark opens on a well-known database, else its first', () => {
+  const [spider, bird] = databaseGroups([
+    { id: 'aan_1', benchmark: 'spider' },
+    { id: 'concert_singer', benchmark: 'spider' },
+    { id: 'bird__formula_1', benchmark: 'bird' },
+  ])
+  assert.equal(defaultDatabase(spider), 'concert_singer')
+  assert.equal(defaultDatabase(bird), 'bird__formula_1')
+  assert.equal(defaultDatabase(undefined), '')
+})
+
+test('filtering keeps matching databases and the selected one', () => {
+  const [spider] = databaseGroups([
+    { id: 'aan_1', benchmark: 'spider' },
+    { id: 'concert_singer', benchmark: 'spider' },
+    { id: 'singer', benchmark: 'spider' },
+  ])
+  assert.deepEqual(filterDatabases(spider.databases, 'SING').map(item => item.id), ['concert_singer', 'singer'])
+  assert.deepEqual(filterDatabases(spider.databases, 'sing', 'aan_1').map(item => item.id), ['aan_1', 'concert_singer', 'singer'])
+  assert.equal(filterDatabases(spider.databases, '  ').length, 3)
 })

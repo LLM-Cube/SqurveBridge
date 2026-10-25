@@ -2,6 +2,7 @@ import sys
 import os
 import json
 import copy
+import hashlib
 import re
 from datetime import datetime
 from pathlib import Path
@@ -42,6 +43,7 @@ from reproduce.lib.checkpoints import (
     resolve_checkpoint_state_path,
     select_resume_checkpoint,
 )
+from reproduce.lib.stage_overrides import apply_stage_overrides, stage_overrides_from_env
 from reproduce.lib.paths import REPRODUCE_ROOT, config_filename, config_repo_path, run_identifier
 from reproduce.metrics.persistence import persist_scores_bundle
 from demo.workspace import (
@@ -51,17 +53,37 @@ from demo.workspace import (
 )
 
 
+def evo_evidence_directory(run_id: str) -> Path | None:
+    root = os.environ.get("SQURVE_EVO_EVIDENCE_DIR")
+    return Path(root) / run_id if root else None
+
+
+def execute_with_evo_evidence(engine: Engine, run_id: str) -> None:
+    """The actual runner seam; normal execution retains its original behavior."""
+    evidence_directory = evo_evidence_directory(run_id)
+    if evidence_directory:
+        collection = json.loads(os.environ.get("SQURVE_EVO_COLLECTION", "{}"))
+        engine.execute(evidence_directory=evidence_directory, evidence_run_id=run_id,
+                       capture_outputs=collection.get("capture_outputs", False),
+                       capture_sql=collection.get("capture_sql", False),
+                       configuration_identity=hashlib.sha256((evidence_directory / "config.redacted.json").read_bytes()).hexdigest()
+                       if (evidence_directory / "config.redacted.json").is_file() else None)
+    else:
+        engine.execute()
+
+
 def main(dataset_name, method, resume=False, resume_from=None):
     identifier = run_identifier(dataset_name, method)
     resume_checkpoint = select_resume_checkpoint(identifier, resume_from) if (resume or resume_from) else None
-    run_id = checkpoint_run_id(resume_checkpoint) if resume_checkpoint else _run_id(identifier)
+    run_id = checkpoint_run_id(resume_checkpoint) if resume_checkpoint else ((os.environ["SQURVE_EVO_RUN_ID"] + "-" + identifier) if os.environ.get("SQURVE_EVO_RUN_ID") else _run_id(identifier))
     config_path = config_filename(dataset_name, method)
     eval_mode = os.environ.get("SQURVE_EVAL_MODE", "full").lower()
 
     original_cwd = os.getcwd()
     os.chdir(REPRODUCE_ROOT)
     try:
-        config_dict = prepare_runtime_llm_config(load_dataset(config_path))
+        stage_overrides = stage_overrides_from_env()
+        config_dict = apply_stage_overrides(prepare_runtime_llm_config(load_dataset(config_path)), stage_overrides)
         ready, ready_message = api_key_ready(config_dict)
         if not ready:
             raise SystemExit(f"LLM provider is not ready for evaluation: {ready_message}")
@@ -94,7 +116,7 @@ def main(dataset_name, method, resume=False, resume_from=None):
         _fill_checkpoint_sample_totals(checkpoint_config, engine)
 
         print("执行自定义任务中...")
-        engine.execute()
+        execute_with_evo_evidence(engine, run_id)
 
         print("\n正在评估...")
         details_available = eval_mode != "minimal"
@@ -134,6 +156,7 @@ def main(dataset_name, method, resume=False, resume_from=None):
                 custom_results=custom_results,
                 stage_results=stage_results,
                 token_data=token_data,
+                stage_overrides=stage_overrides,
             )
         else:
             scores_path, scores = None, None
@@ -261,6 +284,10 @@ def _write_runtime_config(config: dict, run_id: str) -> Path:
         json.dumps(redact_config_secrets(config), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    evidence_directory = evo_evidence_directory(run_id)
+    if evidence_directory:
+        evidence_directory.mkdir(parents=True, exist_ok=True)
+        (evidence_directory / "config.redacted.json").write_bytes(path.read_bytes())
     return path
 
 
@@ -561,6 +588,7 @@ def _persist_scores(
         custom_results,
         stage_results=None,
         token_data=None,
+        stage_overrides=None,
 ):
     output_dir = _scores_output_dir(run_id)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -595,6 +623,8 @@ def _persist_scores(
     )
     if stage_results:
         scores["stage_metrics"] = stage_results
+    if stage_overrides:
+        scores["stage_overrides"] = {stage: item["actor"] for stage, item in stage_overrides.items()}
     persisted = persist_scores_bundle(
         output_dir=output_dir,
         scores=scores,
@@ -603,6 +633,17 @@ def _persist_scores(
         eval_store_path=eval_store_path(),
     )
     scores_path = persisted["scores"]
+
+    if os.environ.get("SQURVE_EVO_EVIDENCE_DIR"):
+        from reproduce.evolve.evaluation import build_evaluation
+        try:
+            if base_dataset is None:
+                base_dataset = _load_dataset_from_engine(config=config)
+            build_evaluation(scores, base_dataset, evo_evidence_directory(run_id), redact_config_secrets(config))
+        except Exception as exc:
+            # Collection/evaluation failure cannot rewrite the original method
+            # result. The strict consumer rejects the missing evaluation bundle.
+            logger.warning("Evo offline evidence unavailable: {}", type(exc).__name__)
 
     # Save detailed report text for offline review
     report_text = capture_full_report(

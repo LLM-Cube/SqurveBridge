@@ -18,11 +18,12 @@ class FakeBackend:
     def __init__(self):
         self.jobs = {}
         self.launched = []
+        self.launched_stages = []
         self.cancelled = []
         self.resumed = []
         self.fail_launch = set()
 
-    def launch(self, method, dataset, sampling, experiment_id):
+    def launch(self, method, dataset, sampling, experiment_id, stages):
         if (method, dataset) in self.fail_launch:
             raise RuntimeError("could not start")
         job_id = f"job{len(self.jobs) + 1}"
@@ -35,6 +36,7 @@ class FakeBackend:
             "progress": {"completed": 0, "total": sampling["limit"], "current_stage": "reduce"},
         }
         self.launched.append((method, dataset, dict(sampling), experiment_id))
+        self.launched_stages.append(dict(stages))
         return job_id
 
     def job(self, job_id):
@@ -237,6 +239,21 @@ class ExperimentControlTests(ExperimentApiTestCase):
         experiment_id = self.create([{"method": "c3sql", "dataset": "spider"}]).json["experiment_id"]
         response = self.client.post(f"/api/experiments/{experiment_id}/cells/c1/resume")
         self.assertEqual(response.status_code, 409)
+
+    def test_a_cancelled_queued_cell_can_rejoin_its_experiment(self):
+        experiment_id = self.create([
+            {"method": "c3sql", "dataset": "spider"},
+            {"method": "dinsql", "dataset": "spider"},
+            {"method": "resdsql", "dataset": "spider"},
+        ]).json["experiment_id"]
+        self.client.post(f"/api/experiments/{experiment_id}/cancel")
+        response = self.client.post(f"/api/experiments/{experiment_id}/cells/c3/resume")
+        self.assertEqual(response.status_code, 202)
+        cell = response.json["cells"][2]
+        self.assertEqual(cell["cell_id"], "c3")
+        self.assertEqual(cell["status"], "running")
+        self.assertEqual(len(self.backend.launched), 3)
+        self.assertEqual(self.backend.resumed, [], "an unstarted cell launches normally")
 
     def test_resuming_a_cell_waits_for_capacity(self):
         experiment_id = self.create([

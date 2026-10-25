@@ -192,6 +192,7 @@ class EvidenceRun:
         capability_profiles: list[CapabilityProfile] | None = None,
         collection_config: CollectionConfig | None = None,
         acceptance_profile: AcceptanceProfile | None = None,
+        configuration_identity: str | None = None,
     ):
         if max_bytes <= 0 or max_total_bytes <= 0 or queue_size <= 0 or write_wait_s < 0:
             raise ValueError("invalid_collection_limits")
@@ -239,6 +240,7 @@ class EvidenceRun:
         self._worker = threading.Thread(target=self._write, daemon=True)
         self._manifest = {
             "schema_version": SCHEMA_VERSION, "run_id": run_id,
+            "configuration_identity": configuration_identity,
             "execution_segment_id": self.segment_id,
             "prior_run_id": prior_run_id, "prior_segment": prior_segment, "checkpoint_ref": checkpoint_ref,
             "coverage": {"profile": "runtime-evidence-v1", "status": "partial",

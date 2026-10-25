@@ -24,6 +24,7 @@ test.after(() => {
 })
 
 test('hosted App exposes session SQL configuration instead of local env configuration', async () => {
+  window.localStorage.setItem('squrve-demo-locale', 'en-US')
   const providers = [{ id: 'qwen', models: ['qwen-plus'], default_model: 'qwen-plus' }]
   const matrix = JSON.parse(fs.readFileSync(path.join(root, 'config/reproduce_matrix.json'), 'utf8'))
   const configs = matrix.databases.flatMap(database => matrix.methods.map(method => {
@@ -95,16 +96,19 @@ test('hosted App exposes session SQL configuration instead of local env configur
     [
       'Methods & Databases',
       'Workflow Composition',
-      'Interactive Query Workspace',
       'Experiment Board',
       'Compare & History',
+      'Interactive Query Workspace',
     ],
   )
   assert.match(document.body.textContent, /64 canonical configurations/i)
   assert.match(document.body.textContent, /Method × Database/i)
   const tabs = screen.getByRole('navigation', { name: 'Workflow stages' })
-  assert.ok(within(tabs).getByRole('button', { name: 'Run' }))
-  assert.ok(within(tabs).getByRole('button', { name: 'Compare' }))
+  assert.ok(within(tabs).getByRole('button', { name: /^Experiment/ }))
+  // The experiment page is mounted but hidden until its tab is opened.
+  const sections = screen.getByRole('navigation', { name: 'Experiment steps', hidden: true })
+  assert.ok(within(sections).getByRole('button', { name: /Run/, hidden: true }))
+  assert.ok(within(sections).getByRole('button', { name: /Compare & History/, hidden: true }))
   await waitFor(() => {
     // History mounts the archive catalog; charts load on demand when expanded.
     assert.ok(requested.some(path => String(path).startsWith('/api/archive')))
@@ -119,6 +123,7 @@ test('hosted App exposes session SQL configuration instead of local env configur
 })
 
 test('local App renders the same full-flow surface as the hosted deployment', async () => {
+  window.localStorage.setItem('squrve-demo-locale', 'en-US')
   const responses = {
     '/api/health': {
       status: 'ok',
@@ -173,11 +178,12 @@ test('local App renders the same full-flow surface as the hosted deployment', as
   assert.ok(screen.getByRole('button', { name: 'qwen-plus' }))
   assert.equal(screen.getByRole('button', { name: 'qwen-plus' }).getAttribute('aria-pressed'), 'true')
   assert.doesNotMatch(document.body.textContent, /Hugging Face Live Demo/i)
-  assert.ok(within(screen.getByRole('navigation', { name: 'Workflow stages' })).getByRole('button', { name: 'Run' }))
+  assert.ok(within(screen.getByRole('navigation', { name: 'Workflow stages' })).getByRole('button', { name: /^Experiment/ }))
   assert.ok(document.querySelector('.flow-demo'))
 })
 
 test('does not expose the local console while capabilities are pending', async () => {
+  window.localStorage.setItem('squrve-demo-locale', 'en-US')
   let resolveFetch
   globalThis.fetch = () => new Promise(resolve => { resolveFetch = resolve })
   render(React.createElement(HostedApp))
@@ -188,6 +194,7 @@ test('does not expose the local console while capabilities are pending', async (
 })
 
 test('shows a neutral boot error instead of falling back to the local console', async () => {
+  window.localStorage.setItem('squrve-demo-locale', 'en-US')
   globalThis.fetch = async () => { throw new Error('offline') }
   render(React.createElement(HostedApp))
   assert.ok(await screen.findByRole('alert'))
