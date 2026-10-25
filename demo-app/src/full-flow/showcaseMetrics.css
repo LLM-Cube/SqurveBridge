@@ -42,7 +42,8 @@
 .showcase-legend i { width: 12px; height: 12px; border-radius: 3px; background: var(--c); }
 .showcase-legend i.hatched { background: repeating-linear-gradient(45deg, var(--c) 0 2px, var(--viz-surface, #fbf8f1) 2px 5px); box-shadow: inset 0 0 0 1px var(--c); }
 .showcase-tooltip { position: absolute; z-index: 10; max-width: 280px; padding: 5px 9px; border-radius: 6px; background: var(--viz-ink, #2e2618); color: #fff; font-size: 11.5px; pointer-events: none; transform: translate(-50%, calc(-100% - 10px)); white-space: nowrap; }
-.showcase-panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px 18px; }
+.showcase-panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px 18px; }
+.showcase-panel-mini svg { max-width: 420px; }
 .showcase-panel-mini h4 { margin: 0 0 2px; font-size: 12.5px; }
 .showcase-metrics-tableview { font-size: 12px; }
 .showcase-metrics-tableview summary { cursor: pointer; color: var(--flow-muted, #6b6152); padding: 2px 0; }
@@ -76,3 +77,35 @@
   .showcase-metrics-grid, .showcase-chart-pair { grid-template-columns: minmax(0, 1fr); }
   .showcase-metrics-grid > .tall { grid-row: auto; }
 }
+
+/* The 50-row question matrix scrolls inside its card with the header pinned. */
+.showcase-metrics-grid > .wide .showcase-metrics-scroll { max-height: 560px; overflow: auto; }
+.showcase-metrics-table.matrix thead th { position: sticky; top: 0; background: var(--flow-panel, #fbf8f1); z-index: 1; }
+
+/* Before a run: the plan and what will be produced; the results fade in once they exist. */
+.showcase-run-gate { display: grid; gap: 10px; margin-top: 18px; padding: 14px 16px; border: 1px dashed var(--flow-border-strong, #d3c6ad); border-radius: 12px; background: var(--flow-panel, #fbf8f1); }
+.showcase-run-gate h2, .showcase-run-gate p { margin: 0; }
+.showcase-run-gate h2 { font-size: 16px; }
+.showcase-run-empty { display: grid; gap: 6px; padding: 14px; border-radius: 10px; background: var(--flow-panel-soft, #f4eddf); color: var(--flow-muted, #6b6152); }
+.showcase-run-empty strong { color: var(--flow-text, #2e2618); font-size: 15px; }
+.showcase-run-empty ul { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.showcase-run-empty li { padding: 2px 10px; border: 1px dashed var(--flow-border-strong, #d3c6ad); border-radius: 999px; font-size: 12px; opacity: .8; }
+.showcase-run-will, .showcase-run-hint { color: var(--flow-muted, #6b6152); font-size: 12.5px; }
+.showcase-run-start { justify-self: start; height: 38px; padding: 0 20px; border: 0; border-radius: 10px; background: #6f4a1b; color: #fff; font-weight: 600; }
+.showcase-run-jobs { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.showcase-run-jobs li { display: grid; grid-template-columns: 90px 70px 1fr 100px; gap: 10px; align-items: center; font-size: 12.5px; }
+.showcase-run-jobs .showcase-chip { justify-self: start; padding: 1px 8px; border-radius: 999px; background: var(--flow-panel-soft, #f4eddf); color: var(--flow-muted, #6b6152); font-size: 11px; }
+.showcase-run-jobs li.done .showcase-chip { background: #e6f1e3; color: #2f6b3a; }
+.showcase-run-jobs .showcase-track { height: 8px; overflow: hidden; border-radius: 4px; background: rgb(92 72 48 / 13%); }
+.showcase-run-jobs .showcase-track > div { height: 100%; background: var(--flow-claude, #8a5c22); transition: width .1s linear; }
+.showcase-run-jobs small { color: var(--flow-muted, #6b6152); }
+.showcase-reveal { animation: showcase-reveal .45s ease-out; }
+.showcase-generated { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 18px 0 0; padding: 8px 12px; border-radius: 8px; background: #e6f1e3; color: #2f6b3a; font-size: 13px; font-weight: 600; }
+.showcase-generated button { margin-left: auto; height: 28px; padding: 0 12px; border: 1px solid #2f6b3a; border-radius: 8px; background: none; color: inherit; font-size: 12px; }
+@keyframes showcase-reveal { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .showcase-reveal { animation: none; } .showcase-run-jobs .showcase-track > div { transition: none; } }
+
+/* Matrix: label columns left, the method columns centred under their headers. */
+.showcase-metrics-table.matrix { max-width: 760px; }
+.showcase-metrics-table.matrix th, .showcase-metrics-table.matrix td { text-align: center; }
+.showcase-metrics-table.matrix th:nth-child(-n+2), .showcase-metrics-table.matrix td:nth-child(-n+2) { text-align: left; }

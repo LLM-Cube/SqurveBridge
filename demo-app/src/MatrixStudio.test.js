@@ -125,8 +125,8 @@ test('the showcase tab opens the recorded replay without a backend', async () =>
   assert.equal(screen.getByTestId('flow-stage-showcase').hidden, false)
   assert.equal(window.location.hash, '#showcase')
   const page = screen.getByTestId('showcase-page')
-  assert.ok(within(page).getByTestId('showcase-metrics'), 'the recorded real-run metrics are on the page')
-  assert.ok(within(page).getByRole('table', { name: 'Answer quality' }))
+  assert.equal(within(page).queryByTestId('showcase-metrics'), null, 'no results before the experiment has run')
+  assert.ok(within(page).getByText('Not run yet'))
 })
 
 test('collapses either pane without hiding both and persists the shell layout', async () => {

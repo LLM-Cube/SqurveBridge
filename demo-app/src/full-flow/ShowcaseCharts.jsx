@@ -82,7 +82,7 @@ function barPath(x, y, w, h) {
 export function GroupedColumns({ label, groups, methods, t, tipLabel }) {
   const uid = useId().replace(/:/g, '')
   const chart = useTip()
-  const W = 700, H = 280, m = { l: 44, r: 10, t: 22, b: 40 }
+  const W = 560, H = 260, m = { l: 40, r: 8, t: 22, b: 40 }
   const pw = W - m.l - m.r, ph = H - m.t - m.b
   const y = value => m.t + ph * (1 - value)
   const groupWidth = pw / groups.length
@@ -141,7 +141,7 @@ export function GroupedColumns({ label, groups, methods, t, tipLabel }) {
 export function CostScatter({ label, points, methods, xLabel, yLabel, t }) {
   const uid = useId().replace(/:/g, '')
   const chart = useTip()
-  const W = 700, H = 300, m = { l: 56, r: 28, t: 18, b: 46 }
+  const W = 560, H = 280, m = { l: 52, r: 24, t: 18, b: 46 }
   const pw = W - m.l - m.r, ph = H - m.t - m.b
   const xmax = Math.max(...points.map(point => point.x)) * 1.12 || 1
   const x = value => m.l + (pw * value) / xmax
@@ -183,7 +183,7 @@ export function CostScatter({ label, points, methods, xLabel, yLabel, t }) {
 export function LatencyRange({ label, rows, methods, t }) {
   const uid = useId().replace(/:/g, '')
   const chart = useTip()
-  const W = 700, rowH = 38, m = { l: 90, r: 40, t: 12, b: 30 }
+  const W = 560, rowH = 38, m = { l: 80, r: 84, t: 12, b: 30 }
   const H = m.t + rows.length * rowH + m.b
   const pw = W - m.l - m.r
   const xmax = Math.max(...rows.map(row => row.p95)) * 1.1 || 1
@@ -272,7 +272,7 @@ export function ErrorPanels({ label, panels, methods, t }) {
   const uid = useId().replace(/:/g, '')
   const chart = useTip()
   const max = Math.max(1, ...panels.flatMap(panel => panel.rows.map(row => row.count)))
-  const rowH = 22, labelW = 150, W = 330
+  const rowH = 22, labelW = 176, W = 360
   return (
     <Frame chart={chart} label={label} legend={null}>
       <div className="showcase-panels">
@@ -309,7 +309,7 @@ export function ErrorPanels({ label, panels, methods, t }) {
 /** Signed gap between predicted and gold SQL per feature: one dot and ±std whisker per method on a zero-centred axis. */
 export function DeltaDots({ label, rows, methods, t }) {
   const chart = useTip()
-  const W = 700, labelW = 150, rowH = 46, m = { t: 34, b: 26, r: 22 }
+  const W = 560, labelW = 130, rowH = 46, m = { t: 34, b: 26, r: 22 }
   const H = m.t + rows.length * rowH + m.b
   const reach = Math.max(0.5, ...rows.flatMap(row => methods.map(method => {
     const cell = row.cells[method.id]
@@ -360,7 +360,7 @@ export function DeltaDots({ label, rows, methods, t }) {
 export function StagePipelines({ label, panels, methods, t }) {
   const uid = useId().replace(/:/g, '')
   const chart = useTip()
-  const rowH = 24, labelW = 170, W = 420
+  const rowH = 24, labelW = 196, W = 450
   return (
     <Frame chart={chart} label={label} legend={null}>
       <div className="showcase-panels">
@@ -402,7 +402,7 @@ const ERROR_INK = '#6b6152'
 export function OutcomeBars({ label, rows, methods, t }) {
   const uid = useId().replace(/:/g, '')
   const chart = useTip()
-  const W = 700, labelW = 90, rowH = 40, m = { t: 30, r: 16, b: 8 }
+  const W = 560, labelW = 84, rowH = 40, m = { t: 30, r: 14, b: 8 }
   const H = m.t + rows.length * rowH + m.b
   const full = W - labelW - m.r
   return (
@@ -415,8 +415,8 @@ export function OutcomeBars({ label, rows, methods, t }) {
           </pattern>
         </defs>
         <rect x={labelW} y="6" width="12" height="12" rx="3" fill="var(--series-1)" /><text x={labelW + 18} y="16" fontSize="11" fill={INK}>{t('showcase.metrics.outcomeCorrect')}</text>
-        <rect x={labelW + 120} y="6" width="12" height="12" rx="3" fill={WRONG} /><text x={labelW + 138} y="16" fontSize="11" fill={INK}>{t('showcase.metrics.outcomeWrong')}</text>
-        <rect x={labelW + 250} y="6" width="12" height="12" rx="3" fill={`url(#${uid}-err)`} /><text x={labelW + 268} y="16" fontSize="11" fill={INK}>{t('showcase.metrics.outcomeError')}</text>
+        <rect x={labelW + 100} y="6" width="12" height="12" rx="3" fill={WRONG} /><text x={labelW + 118} y="16" fontSize="11" fill={INK}>{t('showcase.metrics.outcomeWrong')}</text>
+        <rect x={labelW + 210} y="6" width="12" height="12" rx="3" fill={`url(#${uid}-err)`} /><text x={labelW + 228} y="16" fontSize="11" fill={INK}>{t('showcase.metrics.outcomeError')}</text>
         {rows.map((row, i) => {
           const method = methods.find(item => item.id === row.id)
           const y = m.t + i * rowH
@@ -437,7 +437,13 @@ export function OutcomeBars({ label, rows, methods, t }) {
                 return (
                   <g key={key} {...chart.mark(`${row.id} · ${t(`showcase.metrics.outcome${key[0].toUpperCase()}${key.slice(1)}`)} ${(value * 100).toFixed(1)}%${method.valid ? '' : ` · ${t('showcase.metrics.invalidShort')}`}`)} data-outcome={key} data-value={value}>
                     <rect x={x} y={y} width={Math.max(w - 2, 1)} height="26" rx="3" fill={fill} stroke={key === 'correct' && !method.valid ? colorOf(row.id) : 'none'} />
-                    {w > 44 ? <text x={x + (w - 2) / 2} y={y + 17} textAnchor="middle" fontSize="11" fontWeight="600" fill={key === 'correct' && method.valid ? '#fff' : INK}>{Math.round(value * 100)}%</text> : null}
+                    {w > 44 ? (
+                      <text x={x + (w - 2) / 2} y={y + 17} textAnchor="middle" fontSize="11" fontWeight="700"
+                        fill={key === 'correct' && method.valid ? '#fff' : INK}
+                        stroke={key === 'correct' && method.valid ? 'none' : SURFACE} strokeWidth="3" paintOrder="stroke" strokeLinejoin="round">
+                        {Math.round(value * 100)}%
+                      </text>
+                    ) : null}
                   </g>
                 )
               })}
@@ -452,14 +458,14 @@ export function OutcomeBars({ label, rows, methods, t }) {
 /** For each pair of valid methods: questions both got, only one got, or neither got. */
 export function PairBars({ label, pairs, t }) {
   const chart = useTip()
-  const W = 700, labelW = 170, rowH = 40, m = { t: 30, r: 16, b: 8 }
+  const W = 560, labelW = 160, rowH = 40, m = { t: 30, r: 14, b: 8 }
   const H = m.t + pairs.length * rowH + m.b
   const full = W - labelW - m.r
   return (
     <Frame chart={chart} label={label} legend={null}>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" focusable="false">
         {[[t('showcase.both'), ACCENT], [t('showcase.neither'), '#d6ccb9']].map(([text, fill], i) => (
-          <g key={text}><rect x={labelW + i * 118} y="6" width="12" height="12" rx="3" fill={fill} /><text x={labelW + i * 118 + 18} y="16" fontSize="11" fill={INK}>{text}</text></g>
+          <g key={text}><rect x={labelW + i * 104} y="6" width="12" height="12" rx="3" fill={fill} /><text x={labelW + i * 104 + 18} y="16" fontSize="11" fill={INK}>{text}</text></g>
         ))}
         {pairs.map((pair, i) => {
           const total = pair.both + pair.only_a + pair.only_b + pair.neither

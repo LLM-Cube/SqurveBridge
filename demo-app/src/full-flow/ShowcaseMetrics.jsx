@@ -153,7 +153,7 @@ export default function ShowcaseMetrics({ t, data = record }) {
       </Section>
   )
   const s_cost = (
-      <Section key="cost" title={t('showcase.metrics.cost')} tableView={tableView}
+      <Section key="cost" className="wide" title={t('showcase.metrics.cost')} tableView={tableView}
         chart={(
           <div className="showcase-chart-pair">
             <CostScatter label={chartOf(t('showcase.metrics.costQuality'))} points={scatter} methods={methods} xLabel={t('showcase.metrics.cost.totalTokens')} yLabel="EX" t={t} />
@@ -276,7 +276,7 @@ export default function ShowcaseMetrics({ t, data = record }) {
   const s_matrix = (
       <Section key="matrix" className="wide" title={t('showcase.metrics.matrix')} hint={t('showcase.metrics.matrixHint')}>
         <table className="showcase-metrics-table matrix" aria-label={t('showcase.metrics.matrix')}>
-          <thead><tr><th>#</th><th>{t('configure.sampleLimit')}</th>{matrixIds.map(id => <th key={id} scope="col" className={valid.has(id) ? '' : 'invalid'}>{id}</th>)}</tr></thead>
+          <thead><tr><th>#</th><th>{t('showcase.metrics.hardness')}</th>{matrixIds.map(id => <th key={id} scope="col" className={valid.has(id) ? '' : 'invalid'}>{id}</th>)}</tr></thead>
           <tbody>
             {batch.question_matrix.map(row => (
               <tr key={row.q}>
