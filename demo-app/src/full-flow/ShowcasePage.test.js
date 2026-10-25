@@ -79,7 +79,7 @@ test('the results are generated only when every job has finished, then they fade
   assert.equal(hasMetrics(), true)
   assert.equal(screen.queryByTestId('showcase-run-gate'), null, 'the run panel gives way to the results')
   assert.equal(screen.getAllByRole('tab').length, 6)
-  assert.match(screen.getByRole('status').textContent, /Comparison generated: 4 methods, 1 valid\./)
+  assert.match(screen.getByRole('status').textContent, /Comparison generated: 4 methods, 4 valid\./)
   assert.ok(screen.getByRole('tabpanel'))
 })
 

@@ -50,8 +50,8 @@ const LEVELS = {
   },
   l6: {
     cards: ['Pairwise comparison (valid runs only)', 'Question by question'],
-    charts: [],
-    tables: ['Question by question'],
+    charts: ['Pairwise comparison (valid runs only) chart'],
+    tables: ['Pairwise comparison table', 'Question by question'],
   },
 }
 
@@ -300,6 +300,20 @@ test('l5: component F1 and stage bars equal their table cells', () => {
   }
 })
 
+test('l6: pair bars equal the pairwise table and each pair adds up to every question', () => {
+  const panel = mount('l6')
+  const chart = within(panel).getByRole('img', { name: 'Pairwise comparison (valid runs only) chart' })
+  const rows = within(within(panel).getByRole('table', { name: 'Pairwise comparison table' })).getAllByRole('row').slice(1)
+  assert.equal(rows.length, batch.pairwise.length)
+  batch.pairwise.forEach((pair, index) => {
+    const bars = Object.fromEntries([...chart.querySelectorAll(`[data-pair="${pair.a}-${pair.b}"] [data-part]`)].map(part => [part.dataset.part, Number(part.dataset.value)]))
+    assert.deepEqual(bars, Object.fromEntries(Object.entries({ both: pair.both, only_a: pair.only_a, only_b: pair.only_b, neither: pair.neither }).filter(([, count]) => count > 0)), `${pair.a} vs ${pair.b}`)
+    const cells = within(rows[index]).getAllByRole('cell').map(cell => cell.textContent)
+    assert.deepEqual(cells.slice(0, 2), [pair.a, pair.b])
+    assert.equal(pair.both + pair.only_a + pair.only_b + pair.neither, batch.sample_count)
+  })
+})
+
 test('l6: matrix check marks add up to each tile numerator, and invalid columns are dimmed', () => {
   const panel = mount('l6')
   const grid = within(panel).getByRole('table', { name: 'Question by question' })
@@ -313,7 +327,7 @@ test('l6: matrix check marks add up to each tile numerator, and invalid columns 
     const dimmed = within(row0(rows)).getAllByRole('cell')[column].className.includes('invalid')
     assert.equal(dimmed, !batch.ranking.includes(method), `${method} dimmed exactly when invalid`)
   }
-  assert.ok(within(panel).getByText(/Fewer than two valid runs/))
+  assert.equal(within(panel).queryByText(/Fewer than two valid runs/), null, 'four valid runs give six pairs to compare')
 })
 
 const row0 = rows => rows[0]
