@@ -322,7 +322,11 @@ export default function ShowcaseMetrics({ t, data = record }) {
       <ul className="showcase-kpis" aria-label={t('showcase.metrics.kpis')}>
         {runs.map(([id, run]) => (
           <li key={id} data-method={id} data-valid={valid.has(id)} className={valid.has(id) ? '' : 'invalid'} style={{ '--c': `var(--series-${Math.max(1, METHOD_ORDER.indexOf(id) + 1)})` }}>
-            <span className="kpi-name">{id}<em>{valid.has(id) ? t('showcase.metrics.valid') : t('showcase.metrics.invalid')}</em></span>
+            <span className="kpi-name">{id}
+              <em title={valid.has(id) ? undefined : t('showcase.metrics.invalidHint', { rate: (run.diagnostics.degenerate_rate * 100).toFixed(0) })}>
+                {valid.has(id) ? t('showcase.metrics.valid') : t('showcase.metrics.invalid')}
+              </em>
+            </span>
             <strong>{run.quality.ex.status === 'ok' ? run.quality.ex.value.toFixed(2) : '—'}</strong>
             <small>EX · {run.quality.ex.numerator}/{run.quality.ex.denominator}</small>
             <small>{t('showcase.metrics.kpiCost', { tokens: Math.round((run.cost.total_tokens || 0) / 1000), p50: num(run.cost.latency.p50_s, 0) })}</small>
@@ -340,6 +344,7 @@ export default function ShowcaseMetrics({ t, data = record }) {
               <span>{valid.has(id) ? `✓ ${t('showcase.metrics.valid')}` : `✗ ${t('showcase.metrics.invalid')}`}</span>
               <small>
                 {t('showcase.metrics.diagnostics', {
+                  bad: run.diagnostics.degenerate_predictions, total: run.sampling.sample_count,
                   rate: (run.diagnostics.degenerate_rate * 100).toFixed(0), errors: run.diagnostics.connection_errors,
                   exhausted: run.diagnostics.retries_exhausted,
                 })}

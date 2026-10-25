@@ -44,7 +44,27 @@ test('the page proves the methods answered the same questions and says why a run
   mount()
   const validity = screen.getByLabelText('Run validity')
   assert.match(validity.textContent, /every method answered the same 50 questions \(fingerprint [0-9a-f]{12}\)/)
-  assert.match(validity.querySelector('[data-method="unisar"]').textContent, /52% degenerate · 88 connection errors · 26 retries exhausted/)
+  assert.match(validity.querySelector('[data-method="unisar"]').textContent, /26 of 50 questions produced no SQL \(52%\) · 88 connection errors · 26 retries exhausted/)
+})
+
+test('the validity rule says in plain words what invalid means and why', () => {
+  mount()
+  const validity = screen.getByLabelText('Run validity')
+  const rule = validity.querySelector('p').textContent
+  assert.match(rule, /model calls fail/)
+  assert.match(rule, /empty prediction or a bare SELECT placeholder/)
+  assert.match(rule, /20% or more/)
+  assert.match(rule, /marked invalid/)
+  assert.match(rule, /still shown \(struck through\) but left out of rankings and comparisons/)
+  assert.match(validity.querySelector('[data-method="dinsql"]').textContent, /11 of 50 questions produced no SQL \(22%\)/)
+  assert.match(validity.querySelector('[data-method="c3sql"]').textContent, /0 of 50 questions produced no SQL \(0%\)/)
+})
+
+test('an invalid tile explains itself on hover, a valid one does not need to', () => {
+  mount()
+  const tile = method => within(screen.getByRole('list', { name: 'Method summary' })).getAllByRole('listitem').find(item => item.dataset.method === method)
+  assert.match(tile('finsql').querySelector('.kpi-name em').getAttribute('title'), /38% of the questions produced no SQL/)
+  assert.equal(tile('c3sql').querySelector('.kpi-name em').getAttribute('title'), null)
 })
 
 test('answer quality comes from the recorded runs, and an uncomputable metric is not a zero', () => {
