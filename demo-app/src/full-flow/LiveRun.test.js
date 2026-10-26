@@ -79,3 +79,12 @@ test('shows the running score with tokens and time, and says so when the run was
   assert.match(screen.getByText(/40 tok/).textContent, /EX 1\/1 · 1\/2 · 40 tok · 1\.2s/)
   assert.ok(screen.getByRole('status').textContent.startsWith('Cancelled'))
 })
+
+test('says tokens are not provided instead of showing zero when no stage reported them', async () => {
+  cleanup()
+  const done = { state: 'done', stages: [stage('generate', 'done', 'SELECT 1')], pred_sql: 'SELECT 1', ex: true, result: { ok: true, n: 1, head: [['1']] } }
+  const { api } = fakeApi([snapshot('running', [item(0, done)])])
+  render(React.createElement(LiveRun, { t, api, experimentId: 'exp1', pollMs: 5 }))
+  await waitFor(() => screen.getByText(/tokens not provided/))
+  assert.doesNotMatch(screen.getByText(/tokens not provided/).textContent, /0 tok/)
+})

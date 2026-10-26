@@ -28,8 +28,11 @@ export function lanesFromRecording({ fixture, schedule, index, local, totals }) 
   })
 }
 
-const sum = (runs, field) => runs.reduce((total, run) => total + (run.stages || []).reduce((n, stage) => n + (Number(stage[field]) || 0), 0), 0)
-
+// null when no stage reported the field: "not provided" must not read as zero.
+const total = (runs, field) => {
+  const values = runs.flatMap(run => (run.stages || []).map(stage => stage[field])).filter(value => typeof value === 'number')
+  return values.length ? values.reduce((a, b) => a + b, 0) : null
+}
 /** Per method: how many questions were judged right, judged at all, finished, and planned. */
 export function scoreboard(cells) {
   return Object.fromEntries(cells.map(cell => {
@@ -38,8 +41,8 @@ export function scoreboard(cells) {
       ex: runs.filter(run => run.ex === true).length,
       judged: runs.filter(run => run.ex !== null && run.ex !== undefined).length,
       done: runs.filter(run => run.state === 'done').length,
-      tokens: sum(runs, 'tokens'),
-      seconds: sum(runs, 'seconds'),
+      tokens: total(runs, 'tokens'),
+      seconds: total(runs, 'seconds'),
       total: cell.total || runs.length,
     }]
   }))

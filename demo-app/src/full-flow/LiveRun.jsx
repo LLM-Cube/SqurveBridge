@@ -72,7 +72,7 @@ export default function LiveRun({ t, api, experimentId, pollMs = 1500, labelFor 
           const row = board[cell.method]
           return (
             <li key={cell.cell_id}>
-              <b>{cell.label}</b> EX {row.ex}/{row.judged} · {row.done}/{row.total} · {row.tokens} tok · {row.seconds.toFixed(1)}s
+              <b>{cell.label}</b> EX {row.ex}/{row.judged} · {row.done}/{row.total} · {row.tokens === null ? t('run.liveNoTokens') : `${row.tokens} tok`} · {row.seconds === null ? '—' : `${row.seconds.toFixed(1)}s`}
             </li>
           )
         })}

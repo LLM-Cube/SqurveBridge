@@ -25,6 +25,7 @@ export default {
   'showcase.waiting': 'Waiting for result…',
   'run.liveTitle': 'Live run',
   'run.liveWaiting': 'Waiting for the first questions…',
+  'run.liveNoTokens': 'tokens not provided',
   'run.liveScore': 'Running score',
   'run.live.cancelled': 'Cancelled; finished questions stay above.',
   'run.live.failed': 'Run failed; finished questions stay above and the run can resume from its checkpoint.',

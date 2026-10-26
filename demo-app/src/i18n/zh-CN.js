@@ -25,6 +25,7 @@ export default {
   'showcase.waiting': '等待结果…',
   'run.liveTitle': '实时运行',
   'run.liveWaiting': '等待第一批题目…',
+  'run.liveNoTokens': 'token 未提供',
   'run.liveScore': '累计得分',
   'run.live.cancelled': '已取消，已完成的题目保留在上方。',
   'run.live.failed': '运行失败，已完成的题目保留在上方，可从检查点恢复。',
