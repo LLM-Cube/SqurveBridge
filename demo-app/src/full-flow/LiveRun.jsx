@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import QuestionLanes from './RunLanes.jsx'
-import { focusOf, lanesFromTimeline } from './runLanes.js'
+import { focusOf, lanesFromTimeline, scoreboard } from './runLanes.js'
 
 const ACTIVE = new Set(['queued', 'running'])
 
@@ -63,8 +63,21 @@ export default function LiveRun({ t, api, experimentId, pollMs = 1500, labelFor 
   const index = focusOf(timelineCells)
   const question = timelineCells.flatMap(cell => cell.questions).find(item => item.index === index)
   const total = Math.max(...timelineCells.map(cell => cell.total || 0))
+  const board = scoreboard(timelineCells)
+  const ended = ['cancelled', 'failed'].includes(status) ? t(`run.live.${status}`) : ''
   return (
     <section className="showcase-run showcase-live" aria-label={t('run.liveTitle')} data-status={status}>
+      <ul className="showcase-scoreboard" aria-label={t('run.liveScore')}>
+        {timelineCells.map(cell => {
+          const row = board[cell.method]
+          return (
+            <li key={cell.cell_id}>
+              <b>{cell.label}</b> EX {row.ex}/{row.judged} · {row.done}/{row.total} · {row.tokens} tok · {row.seconds.toFixed(1)}s
+            </li>
+          )
+        })}
+      </ul>
+      {ended ? <p className="showcase-empty" role="status">{ended}</p> : null}
       {failed ? <p className="showcase-empty">{t('run.liveUnavailable')}</p> : null}
       <QuestionLanes
         t={t}

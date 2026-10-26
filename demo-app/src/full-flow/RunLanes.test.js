@@ -77,7 +77,7 @@ test('the scoreboard counts only judged questions and treats an unjudged one as 
     question(2, { c3sql: run('done', [], { ex: null, pred_sql: 'x' }) }),
     question(3, { c3sql: run('running', []) }),
   ]
-  assert.deepEqual(scoreboard([wire('c3sql', items)]).c3sql, { ex: 1, judged: 2, done: 3, total: 4 })
+  assert.deepEqual(scoreboard([wire('c3sql', items)]).c3sql, { ex: 1, judged: 2, done: 3, tokens: 0, seconds: 0, total: 4 })
 })
 
 test('the focus is the first question that is still running, else the last one', () => {

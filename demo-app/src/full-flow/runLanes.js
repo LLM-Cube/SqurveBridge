@@ -28,6 +28,8 @@ export function lanesFromRecording({ fixture, schedule, index, local, totals }) 
   })
 }
 
+const sum = (runs, field) => runs.reduce((total, run) => total + (run.stages || []).reduce((n, stage) => n + (Number(stage[field]) || 0), 0), 0)
+
 /** Per method: how many questions were judged right, judged at all, finished, and planned. */
 export function scoreboard(cells) {
   return Object.fromEntries(cells.map(cell => {
@@ -36,6 +38,8 @@ export function scoreboard(cells) {
       ex: runs.filter(run => run.ex === true).length,
       judged: runs.filter(run => run.ex !== null && run.ex !== undefined).length,
       done: runs.filter(run => run.state === 'done').length,
+      tokens: sum(runs, 'tokens'),
+      seconds: sum(runs, 'seconds'),
       total: cell.total || runs.length,
     }]
   }))

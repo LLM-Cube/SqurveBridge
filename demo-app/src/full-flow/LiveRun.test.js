@@ -44,7 +44,7 @@ test('shows the question and lanes as the run produces them, then the verdict', 
   render(React.createElement(LiveRun, { t, api, experimentId: 'exp1', pollMs: 5 }))
   await waitFor(() => screen.getByText('Question 1?'))
   // The last response only repeats question 1; question 0's hit comes from the earlier response.
-  await waitFor(() => screen.getByText(/EX 1\/2/))
+  await waitFor(() => assert.ok(screen.getAllByText(/EX 1\/2/).length >= 1))
   assert.ok(screen.getByText(/EX mismatch/))
   assert.match(calls[0], /\/api\/experiments\/exp1\/timeline\?since=0$/)
   assert.match(calls[1], /since=0$/)
@@ -68,4 +68,14 @@ test('says it is waiting before the first event, and says why when the timeline 
   cleanup()
   render(React.createElement(LiveRun, { t, api: async () => { throw new Error('boom') }, experimentId: 'exp1', pollMs: 5 }))
   await waitFor(() => screen.getByText(/Live view unavailable/))
+})
+
+test('shows the running score with tokens and time, and says so when the run was cancelled', async () => {
+  cleanup()
+  const done = { state: 'done', stages: [{ ...stage('generate', 'done', 'SELECT 1'), tokens: 40 }], pred_sql: 'SELECT 1', ex: true, result: { ok: true, n: 1, head: [['1']] } }
+  const { api } = fakeApi([snapshot('cancelled', [item(0, done), item(1, idle)])])
+  render(React.createElement(LiveRun, { t, api, experimentId: 'exp1', pollMs: 5 }))
+  await waitFor(() => screen.getByText(/40 tok/))
+  assert.match(screen.getByText(/40 tok/).textContent, /EX 1\/1 · 1\/2 · 40 tok · 1\.2s/)
+  assert.ok(screen.getByRole('status').textContent.startsWith('Cancelled'))
 })
