@@ -124,7 +124,8 @@ def apply_runtime_llm_overrides(config: dict) -> dict:
     load_dotenv()
     provider = (os.environ.get("SQURVE_LLM_PROVIDER") or "").strip()
     model = (os.environ.get("SQURVE_LLM_MODEL") or "").strip()
-    if not provider and not model:
+    base_url = (os.environ.get("SQURVE_LLM_BASE_URL") or "").strip()
+    if not provider and not model and not base_url:
         return config
 
     resolved = dict(config)
@@ -142,6 +143,9 @@ def apply_runtime_llm_overrides(config: dict) -> dict:
 
     if model:
         llm["model_name"] = model
+
+    if base_url:
+        llm["base_url"] = base_url
 
     resolved["llm"] = llm
     return resolved

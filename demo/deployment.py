@@ -12,14 +12,10 @@ _AGENT_ROUTE_PREFIX = "/api/agent"
 _HOSTED_FORBIDDEN = (
     ("POST", "/api/provider"),
     ("POST", "/api/databases/upload"),
-    ("POST", "/api/evaluations"),
     ("POST", "/api/comparisons"),
     ("POST", "/api/comparison-snapshots"),
 )
-_HOSTED_FORBIDDEN_PREFIXES = (
-    "/api/evaluations/",
-    "/api/experiments",
-)
+_HOSTED_FORBIDDEN_PREFIXES: tuple[str, ...] = ()
 
 
 def deployment_target(environment: Mapping[str, str] | None = None) -> str:
@@ -47,7 +43,7 @@ def deployment_features(environment: Mapping[str, str] | None = None) -> dict[st
         "session_sql_auth": hosted,
         "database_upload": not hosted,
         "agent_chat": agent_enabled(environment),
-        "live_evaluation": not hosted,
+        "live_evaluation": True,
     }
 
 

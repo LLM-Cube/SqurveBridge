@@ -13,7 +13,7 @@ license: mit
 
 This Space runs the same Demo App shipped in the SqurveBridge repository: an interactive Text-to-SQL workspace with an embedded open-source Pi Agent backend, built on the upstream Squrve framework.
 
-The hosted environment keeps live LLM-backed SQL generation, read-only execution, Pi chat, and project Skills. Pi is restricted to read-only tools in the public Space; full coding tools remain local-only.
+The hosted environment keeps live LLM-backed SQL generation, read-only execution, Pi chat, and project Skills. Reproduce configs can also be run on the Space with the visitor's own session key (small samples, one run per visitor, private to that browser session). Pi is restricted to read-only tools in the public Space; full coding tools remain local-only.
 
 The Space has no shared model credential. Use **Configure LLM** for the SQL
 workflow and **Login to Pi** for Agent chat; the two credentials and provider

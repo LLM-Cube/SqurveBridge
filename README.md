@@ -221,7 +221,7 @@ The **reproduce config** is the main seam: CLI and Demo invoke the same runner w
 # open http://127.0.0.1:5173
 ```
 
-Local mode binds to `127.0.0.1` with full coding tools for Pi. The public Space is read-only for agent tools, blocks uploads and live evaluation writes, and keeps visitor credentials in session memory only — never in score bundles or runtime configs on disk.
+Local mode binds to `127.0.0.1` with full coding tools for Pi. The public Space is read-only for agent tools, blocks uploads, and keeps visitor credentials in session memory only — never in score bundles or runtime configs on disk. Visitors can run reproduce configs on the Space with their own key: each run belongs to the browser session that started it, is capped (at most 20 questions, 4 cells, one run per visitor, 3 running jobs on the Space) and the key reaches only that visitor's evaluation process.
 
 ## Usage
 
