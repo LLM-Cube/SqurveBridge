@@ -228,12 +228,21 @@ class SpaceApiTests(unittest.TestCase):
         self.assertEqual(saved.status_code, 200)
         self.assertIn("Secure", saved.headers["Set-Cookie"])
         self.assertIn("HttpOnly", saved.headers["Set-Cookie"])
-        self.assertIn("SameSite=Lax", saved.headers["Set-Cookie"])
+        # Shown in an iframe on huggingface.co: needs a partitioned cross-site cookie.
+        self.assertIn("SameSite=None", saved.headers["Set-Cookie"])
+        self.assertIn("Partitioned", saved.headers["Set-Cookie"])
         self.assertTrue(first_status.json["configured"])
         self.assertEqual(first_status.json["provider"], "qwen")
         self.assertFalse(second_status.json["configured"])
         self.assertNotIn("sql-secret-a", first_status.get_data(as_text=True))
         self.assertNotIn("sql-secret-a", saved.get_data(as_text=True))
+
+    def test_local_session_cookie_stays_lax_and_unpartitioned(self):
+        with patch.dict(os.environ, {"SQURVE_DEPLOYMENT_TARGET": "local"}, clear=False):
+            self.assertEqual(
+                self.api_server._session_cookie_attributes(),
+                {"secure": False, "httponly": True, "samesite": "Lax"},
+            )
 
     def test_testing_a_sql_key_does_not_activate_it(self):
         payload = {"provider": "qwen", "model": "qwen-plus", "api_key": "test-only-secret"}
