@@ -276,10 +276,11 @@ class ExperimentControlTests(ExperimentApiTestCase):
         response = self.client.post(f"/api/experiments/{experiment_id}/cancel")
         self.assertEqual(response.json["status"], "partial")
 
-    def test_hosted_space_cannot_run_experiments(self):
+    def test_hosted_space_runs_experiments_only_on_the_visitors_own_key(self):
         with patch.dict(os.environ, {"SQURVE_DEPLOYMENT_TARGET": "hf-space"}, clear=False):
             response = self.create([{"method": "c3sql", "dataset": "spider"}])
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json["code"], "credential_required")
         self.assertEqual(self.backend.launched, [])
 
 

@@ -163,7 +163,6 @@ class SpaceApiTests(unittest.TestCase):
             for method, path in (
                 ("post", "/api/provider"),
                 ("post", "/api/databases/upload"),
-                ("post", "/api/evaluations"),
                 ("post", "/api/comparisons"),
             ):
                 response = getattr(self.client, method)(path, json={})

@@ -27,7 +27,7 @@ class DemoDeploymentTests(unittest.TestCase):
                 "session_sql_auth": True,
                 "database_upload": False,
                 "agent_chat": False,
-                "live_evaluation": False,
+                "live_evaluation": True,
             },
         )
 
@@ -46,7 +46,9 @@ class DemoDeploymentTests(unittest.TestCase):
         ))
         self.assertFalse(hosted_route_allowed("POST", "/api/provider", env))
         self.assertFalse(hosted_route_allowed("POST", "/api/databases/upload", env))
-        self.assertFalse(hosted_route_allowed("POST", "/api/evaluations", env))
+        self.assertTrue(hosted_route_allowed("POST", "/api/evaluations", env))
+        self.assertTrue(hosted_route_allowed("POST", "/api/experiments", env))
+        self.assertTrue(hosted_route_allowed("GET", "/api/evaluations/abc", env))
         self.assertFalse(hosted_route_allowed("POST", "/api/comparisons", env))
         self.assertTrue(hosted_route_allowed("GET", "/api/terminals", env))
 

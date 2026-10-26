@@ -89,9 +89,9 @@ def enforce_deployment_policy():
     if request.url_rule is None or not request.path.startswith("/api/"):
         return None
     reason = route_denial(request.method, request.path)
-    if reason is None:
-        return None
-    return jsonify({"message": _ROUTE_DENIAL_MESSAGES[reason], "reason": reason}), 403
+    if reason is not None:
+        return jsonify({"message": _ROUTE_DENIAL_MESSAGES[reason], "reason": reason}), 403
+    return _hosted_ownership_error()
 
 
 @app.errorhandler(404)
@@ -113,6 +113,19 @@ _resume_backoff_seconds = max(0.0, float(os.environ.get("SQURVE_EVAL_RESUME_BACK
 _provider_validation = {"verified": False, "error": None}
 _runtime_llm: dict[str, str | None] = {"provider": None, "model": None}
 _sql_credentials = SessionCredentialRegistry(max_sessions=128, idle_timeout=1800)
+
+# Hosted runs: every job belongs to the browser session that started it and runs on that
+# visitor's own key. Keys stay in memory only (never in job.json) and are dropped when the
+# job or experiment ends.
+_HOSTED_MAX_SAMPLES = 20
+_HOSTED_MAX_CELLS = 4
+_HOSTED_MAX_ACTIVE_JOBS = 3
+_ACTIVE_JOB_STATUSES = {"starting", "running", "resuming"}
+_job_owners: dict[str, str] = {}
+_job_credentials: dict[str, SqlCredential] = {}
+_experiment_owners: dict[str, str] = {}
+_experiment_credentials: dict[str, SqlCredential] = {}
+_launch_binding = threading.local()
 _session_cookie_name = "squrve_session"
 _sample_limits = {3, 10, 20, 50, 100, 200}
 _supported_providers = frozenset(model_catalog.PROVIDER_ORDER)
@@ -156,6 +169,102 @@ def _local_request_error():
 
 def _json_error(message: str, status: int = 400):
     return jsonify({"status": "error", "message": message}), status
+
+
+def _hosted() -> bool:
+    return deployment_target() == "hf-space"
+
+
+def _json_code_error(code: str, message: str, status: int):
+    return jsonify({"status": "error", "code": code, "message": message}), status
+
+
+def _hosted_run_binding():
+    """(session_id, credential) for a hosted run, or an error response to return."""
+    denied = _same_origin_error()
+    if denied is not None:
+        return None, denied
+    session_id, _ = _browser_session(create=False)
+    credential = _sql_credentials.get(session_id) if session_id else None
+    if credential is None:
+        return None, _json_code_error(
+            "credential_required",
+            "Connect your own LLM key (Configure LLM) before running a config.",
+            401,
+        )
+    if credential.provider not in PROVIDER_ENV_VARS:
+        return None, _json_code_error(
+            "unsupported_provider", "This provider cannot run reproduce configs.", 400,
+        )
+    return (session_id, credential), None
+
+
+def _session_has_active_run(session_id: str) -> bool:
+    with _jobs_lock:
+        if any(
+            owner == session_id and (_jobs.get(job_id) or {}).get("status") in _ACTIVE_JOB_STATUSES
+            for job_id, owner in _job_owners.items()
+        ):
+            return True
+    return any(
+        _experiment_owners.get(item.get("experiment_id")) == session_id
+        and item.get("status") in {"queued", "running"}
+        for item in _experiments.list()
+    )
+
+
+def _hosted_capacity_error(session_id: str):
+    if _session_has_active_run(session_id):
+        return _json_code_error(
+            "run_in_progress", "Finish or cancel your current run before starting another.", 429,
+        )
+    with _jobs_lock:
+        active = sum(1 for job in _jobs.values() if job.get("status") in _ACTIVE_JOB_STATUSES)
+    if active >= _HOSTED_MAX_ACTIVE_JOBS:
+        return _json_code_error(
+            "capacity_reached", "The Space is running other visitors' configs. Try again shortly.", 429,
+        )
+    return None
+
+
+def _hosted_ownership_error():
+    """Hosted jobs and experiments are visible only to the session that started them."""
+    if not _hosted() or not request.view_args:
+        return None
+    session_id, _ = _browser_session(create=False)
+    args = request.view_args
+    if "job_id" in args and _job_owners.get(args["job_id"]) != session_id:
+        return _json_error("Evaluation not found.", 404)
+    if "experiment_id" in args and _experiment_owners.get(args["experiment_id"]) != session_id:
+        return _json_error("Experiment not found.", 404)
+    if "comparison_id" in args and not any(
+        owner == session_id and (_jobs.get(job_id) or {}).get("comparison_id") == args["comparison_id"]
+        for job_id, owner in _job_owners.items()
+    ):
+        return _json_error("Comparison not found in the current session.", 404)
+    return None
+
+
+def _apply_credential_env(env: dict[str, str], credential: SqlCredential) -> None:
+    for name in PROVIDER_ENV_VARS.values():
+        env.pop(name, None)
+    env["SQURVE_LLM_PROVIDER"] = credential.provider
+    env["SQURVE_LLM_MODEL"] = credential.model
+    env[PROVIDER_ENV_VARS[credential.provider]] = credential.api_key
+    if credential.base_url:
+        env["SQURVE_LLM_BASE_URL"] = credential.base_url
+    else:
+        env.pop("SQURVE_LLM_BASE_URL", None)
+
+
+def _prune_experiment_credentials() -> None:
+    live = {
+        item.get("experiment_id")
+        for item in _experiments.list()
+        if item.get("status") in {"queued", "running"}
+    }
+    for experiment_id in [key for key in _experiment_credentials if key not in live]:
+        _experiment_credentials.pop(experiment_id, None)
 
 
 class SqlAuthError(Exception):
@@ -1879,6 +1988,9 @@ def _job_environment(job: dict) -> dict[str, str]:
     child_env["SQURVE_EVAL_SAMPLE_MODE"] = job["sample_mode"]
     child_env["SQURVE_EVAL_SAMPLE_SEED"] = str(job["sample_seed"])
     child_env["SQURVE_EVAL_SCOPE"] = "smoke"
+    credential = _job_credentials.get(job["job_id"])
+    if credential is not None:
+        _apply_credential_env(child_env, credential)
     child_env.pop(STAGE_ACTORS_ENV, None)
     if job.get("stage_overrides"):
         child_env[STAGE_ACTORS_ENV] = json.dumps(job["stage_overrides"])
@@ -2041,8 +2153,12 @@ def _job_with_progress(job: dict) -> dict:
 
 @app.get("/api/session")
 def session_state():
+    owner = _browser_session(create=False)[0] if _hosted() else None
     with _jobs_lock:
-        jobs = [_job_with_progress(job) for job in _jobs.values()]
+        jobs = [
+            _job_with_progress(job) for job in _jobs.values()
+            if not _hosted() or (owner and _job_owners.get(job["job_id"]) == owner)
+        ]
     jobs.sort(key=lambda item: item.get("started_at", 0), reverse=True)
     return jsonify({"jobs": jobs})
 
@@ -2075,6 +2191,8 @@ def _monitor_job(job_id: str, process: subprocess.Popen, log_handle, scores_path
             job["result"] = _summarize_scores(scores_path)
             job["run_id"] = job["result"].get("run_id")
         _processes.pop(job_id, None)
+        if not should_resume and job.get("status") != "failed":
+            _job_credentials.pop(job_id, None)
         _persist_job(job)
     if should_resume:
         threading.Thread(target=_resume_job_after_backoff, args=(job_id,), daemon=True).start()
@@ -2133,6 +2251,9 @@ def _launch_evaluation(
         sample_mode: str = "slice",
         sample_seed: int = 42,
         stages: dict[str, str] | None = None,
+        *,
+        owner: str | None = None,
+        credential: SqlCredential | None = None,
 ) -> dict:
     configs = _config_catalog()
     config = next((item for item in configs if item["dataset"] == dataset and item["method"] == method), None)
@@ -2164,6 +2285,10 @@ def _launch_evaluation(
     }
     with _jobs_lock:
         _jobs[job_id] = job
+        if owner is not None:
+            _job_owners[job_id] = owner
+        if credential is not None:
+            _job_credentials[job_id] = credential
         _persist_job(job)
     if not _spawn_evaluation_job(job_id, resume=False, expected_status="starting"):
         raise RuntimeError("Evaluation launch was cancelled before the process started.")
@@ -2178,6 +2303,16 @@ def start_evaluation():
     if len(validation) == 2:
         return validation
     sample_limit, sample_mode, sample_seed = validation
+    binding = None
+    if _hosted():
+        binding, denied = _hosted_run_binding()
+        if denied is not None:
+            return denied
+        if sample_limit > _HOSTED_MAX_SAMPLES:
+            return _json_error(f"Hosted runs are limited to {_HOSTED_MAX_SAMPLES} questions.")
+        denied = _hosted_capacity_error(binding[0])
+        if denied is not None:
+            return denied
     try:
         job = _launch_evaluation(
             str(payload.get("dataset", "")),
@@ -2186,6 +2321,8 @@ def start_evaluation():
             sample_limit,
             sample_mode,
             sample_seed,
+            owner=binding[0] if binding else None,
+            credential=binding[1] if binding else None,
         )
     except ValueError as exc:
         return _json_error(str(exc))
@@ -2315,6 +2452,8 @@ def _evaluation_llm_preflight(dataset: str, method: str) -> None:
         config = json.loads(config_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"Reproduce configuration is unreadable: {exc}") from exc
+    if _hosted():
+        return  # the key is the visitor's session credential, checked when the run starts
     from reproduce.lib.env_config import prepare_runtime_llm_config
 
     resolved = prepare_runtime_llm_config(config)
@@ -2374,6 +2513,11 @@ def resume_evaluation(job_id: str):
         _evaluation_llm_preflight(dataset, method)
     except ValueError as exc:
         return _json_error(str(exc))
+    if _hosted():
+        binding, denied = _hosted_run_binding()
+        if denied is not None:
+            return denied
+        _job_credentials[job_id] = binding[1]
     with _jobs_lock:
         job = _jobs.get(job_id)
         if not job or not _job_resumable(job):
@@ -2400,9 +2544,15 @@ class _EvaluationJobBackend:
     """Runs experiment cells as ordinary Demo evaluation jobs."""
 
     def launch(self, method: str, dataset: str, sampling: dict, experiment_id: str, stages: dict[str, str]) -> str:
+        bound = getattr(_launch_binding, "value", None)
+        if bound is not None:
+            _experiment_owners.setdefault(experiment_id, bound[0])
+            _experiment_credentials.setdefault(experiment_id, bound[1])
         job = _launch_evaluation(
             dataset, method, f"exp-{experiment_id}", sampling["limit"], sampling["mode"], sampling["seed"],
             stages=stages,
+            owner=_experiment_owners.get(experiment_id),
+            credential=_experiment_credentials.get(experiment_id),
         )
         return job["job_id"]
 
@@ -2459,6 +2609,7 @@ def _start_experiment_ticker() -> None:
             time.sleep(1.0)
             try:
                 _experiments.tick()
+                _prune_experiment_credentials()
             except Exception:  # noqa: BLE001 - keep the ticker alive across one bad tick
                 logger.exception("Experiment queue tick failed")
 
@@ -2496,6 +2647,16 @@ def create_experiment():
     raw_cells = payload.get("cells")
     if not isinstance(raw_cells, list) or not raw_cells:
         return _json_error("Select at least one method × benchmark cell.")
+    binding = None
+    if _hosted():
+        binding, denied = _hosted_run_binding()
+        if denied is not None:
+            return denied
+        if len(raw_cells) > _HOSTED_MAX_CELLS:
+            return _json_error(f"Hosted experiments can hold at most {_HOSTED_MAX_CELLS} cells.")
+        denied = _hosted_capacity_error(binding[0])
+        if denied is not None:
+            return denied
     configs = _config_catalog()
     actors_by_type = swappable_actors(configs)
     cells: list[tuple[str, str, dict[str, str]]] = []
@@ -2533,14 +2694,27 @@ def create_experiment():
     if rejected:
         summary = ", ".join(f"{item['method']}/{item['dataset']} ({item['error_code']})" for item in rejected)
         return jsonify({"status": "error", "message": f"Some cells cannot run yet: {summary}.", "cells": rejected}), 400
-    experiment = _experiments.create(cells, sampling)
+    if binding is not None and sampling["limit"] > _HOSTED_MAX_SAMPLES:
+        return _json_error(f"Hosted runs are limited to {_HOSTED_MAX_SAMPLES} questions.")
+    _launch_binding.value = binding
+    try:
+        experiment = _experiments.create(cells, sampling)
+    finally:
+        _launch_binding.value = None
     _start_experiment_ticker()
     return jsonify(experiment), 202
 
 
 @app.get("/api/experiments")
 def list_experiments():
-    return jsonify({"experiments": _experiments.list()})
+    experiments = _experiments.list()
+    if _hosted():
+        owner = _browser_session(create=False)[0]
+        experiments = [
+            item for item in experiments
+            if owner and _experiment_owners.get(item.get("experiment_id")) == owner
+        ]
+    return jsonify({"experiments": experiments})
 
 
 @app.get("/api/experiments/<experiment_id>")
