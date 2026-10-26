@@ -76,7 +76,11 @@ test('shows the running score with tokens and time, and says so when the run was
   const { api } = fakeApi([snapshot('cancelled', [item(0, done), item(1, idle)])])
   render(React.createElement(LiveRun, { t, api, experimentId: 'exp1', pollMs: 5 }))
   await waitFor(() => screen.getByText(/40 tok/))
-  assert.match(screen.getByText(/40 tok/).textContent, /EX 1\/1 · 1\/2 · 40 tok · 1\.2s/)
+  assert.match(screen.getByText(/40 tok/).textContent, /EX 1\/1 · 40 tok · 1\.2s/)
+  // The same per-method progress row as the recorded replay, coloured by method.
+  const row = screen.getByRole('list', { name: 'Running score' }).querySelector('li[data-method="c3sql"]')
+  assert.match(row.textContent, /1\/2/)
+  assert.ok(row.querySelector('.showcase-track'))
   assert.ok(screen.getByRole('status').textContent.startsWith('Cancelled'))
 })
 

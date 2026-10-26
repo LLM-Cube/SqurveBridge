@@ -18,7 +18,7 @@ _TRACE = "actor_trace="
 _STARTED = re.compile(r"开始处理样本\s+(\S+)\s*$")
 _ENTERED = re.compile(r"样本\s+(\S+)\s+@\s+(\S+)\s*$")
 _FINISHED = re.compile(r"样本\s+(\S+)\s+处理完成\s*\(([\d.]+)s\)")
-_TEXT_LIMIT = 240
+_TEXT_LIMIT = 160
 
 Judge = Callable[[Mapping, str], Mapping]
 
@@ -28,6 +28,7 @@ def _describe(value) -> str:
     if value is None:
         return ""
     if isinstance(value, str):
+        value = " ".join(value.split())
         return value if len(value) <= _TEXT_LIMIT else value[:_TEXT_LIMIT] + "…"
     if isinstance(value, (list, tuple)):
         head = ", ".join(str(item) for item in value[:6])

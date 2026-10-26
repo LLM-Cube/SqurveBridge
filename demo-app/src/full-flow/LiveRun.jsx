@@ -90,13 +90,20 @@ export default function LiveRun({ t, api, experimentId, pollMs = 1500, replayMs 
   const board = scoreboard(timelineCells)
   const ended = ['cancelled', 'failed'].includes(status) ? t(`run.live.${status}`) : ''
   return (
-    <section className="showcase-run showcase-live" aria-label={t('run.liveTitle')} data-status={status}>
-      <ul className="showcase-scoreboard" aria-label={t('run.liveScore')}>
+    <section className="showcase showcase-run showcase-live" aria-label={t('run.liveTitle')} data-status={status}>
+      <ul className="showcase-jobs" aria-label={t('run.liveScore')}>
         {timelineCells.map(cell => {
           const row = board[cell.method]
+          const over = !ACTIVE.has(cell.status)
           return (
-            <li key={cell.cell_id}>
-              <b>{cell.label}</b> EX {row.ex}/{row.judged} · {row.done}/{row.total} · {row.tokens === null ? t('run.liveNoTokens') : `${row.tokens} tok`} · {row.seconds === null ? '—' : `${row.seconds.toFixed(1)}s`}
+            <li key={cell.cell_id} data-method={cell.method} className={over ? 'done' : 'live'}>
+              <b>{cell.label} → {cell.dataset}</b>
+              <span className="showcase-chip">{t(`run.live.status.${cell.status}`)}</span>
+              <div className="showcase-track"><div style={{ width: `${row.total ? (100 * row.done) / row.total : 0}%` }} /></div>
+              <small>{row.done}/{row.total}</small>
+              <small className="showcase-jobmeta">
+                EX {row.ex}/{row.judged} · {row.tokens === null ? t('run.liveNoTokens') : `${row.tokens} tok`} · {row.seconds === null ? '—' : `${row.seconds.toFixed(1)}s`}
+              </small>
             </li>
           )
         })}
