@@ -6,7 +6,6 @@ import {
   compareView,
   composeView,
   cursorAt,
-  describeResult,
   LIMIT_OPTIONS,
   locate,
   pairOutcome,
@@ -14,10 +13,11 @@ import {
   PHASES,
   runView,
   stageProgress,
-  stageText,
   summarize,
   totalsAt,
 } from './showcaseModel.js'
+import QuestionLanes from './RunLanes.jsx'
+import { lanesFromRecording } from './runLanes.js'
 import './showcase.css'
 
 const SPEEDS = [0.5, 1, 2, 4]
@@ -31,34 +31,6 @@ const startTime = total => {
 }
 const labelOf = id => fixture.methods.find(method => method.id === id)?.label || id
 const benchmarkLabel = () => fixture.flow.grid.datasets.find(d => d.id === fixture.flow.plan.dataset).label
-
-function Stage({ stage, window, local, t }) {
-  const { state, typed } = stageProgress(window, local)
-  const text = stageText(stage)
-  return (
-    <li className={`showcase-stage ${state}`}>
-      <div className="showcase-stage-row">
-        <span className="showcase-dot" aria-hidden="true" />
-        <b>{stage.name}</b>
-        <small>
-          {state === 'run' ? t('showcase.running') : state === 'done' ? (stage.tokens ? t('showcase.stageMeta', { tokens: stage.tokens, seconds: stage.seconds }) : t('showcase.stageSeconds', { seconds: stage.seconds })) : ''}
-        </small>
-      </div>
-      <pre className={`showcase-out ${stage.kind === 'sql' ? 'sql' : ''}`}>{text.slice(0, Math.ceil(text.length * typed))}</pre>
-    </li>
-  )
-}
-
-function Verdict({ run, ready, t }) {
-  if (!ready) return <div className="showcase-verdict wait">{t('showcase.waiting')}</div>
-  return (
-    <div className={`showcase-verdict ${run.ex ? 'ok' : 'bad'}`}>
-      <b>{run.ex ? `✓ ${t('showcase.hit')}` : `✗ ${t('showcase.miss')}`}</b>
-      <pre>{run.pred_sql}</pre>
-      <div>{describeResult(run.result, t)}</div>
-    </div>
-  )
-}
 
 // ① Compose: sampling parameters and the method × benchmark matrix, driven by the cursor.
 function ComposePhase({ flow, local, hover, t }) {
@@ -199,33 +171,11 @@ function RunPhase({ flow, local, hover, t }) {
 
       {started ? (
         <>
-          <div className="showcase-question" aria-live="polite">
-            <div className="showcase-qhead">
-              <span>Q{index + 1}/{n}</span>
-              <strong>{question.question}</strong>
-              <code>{question.db}</code>
-              <code>{question.hardness}</code>
-            </div>
-            <small>{t('showcase.gold')}</small>
-            <pre>{question.gold_sql}</pre>
-          </div>
-          <div className="showcase-lanes">
-            {planned.map(id => {
-              const run = question.methods[id]
-              const lane = flow.run.schedule.questions[index].lanes[id]
-              return (
-                <article key={id} className="showcase-lane" data-method={id}>
-                  <div className="showcase-lane-head"><b>{labelOf(id)}</b><span>EX {totals[id].ex}/{totals[id].judged}</span></div>
-                  <ol>
-                    {run.stages.map((stage, i) => (
-                      <Stage key={`${question.id}-${stage.name}`} stage={stage} window={lane.stages[i]} local={inQuestion} t={t} />
-                    ))}
-                  </ol>
-                  <Verdict run={run} ready={inQuestion >= lane.verdict} t={t} />
-                </article>
-              )
-            })}
-          </div>
+          <QuestionLanes
+            t={t}
+            info={{ index, total: n, question: question.question, db: question.db, hardness: question.hardness, gold_sql: question.gold_sql }}
+            lanes={lanesFromRecording({ fixture, schedule: flow.run.schedule, index, local: inQuestion, totals })}
+          />
         </>
       ) : null}
     </div>
