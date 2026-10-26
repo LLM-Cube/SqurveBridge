@@ -1,6 +1,6 @@
 {
   "stage": ["name", "kind", "text", "seconds"],
   "run": ["stages", "pred_sql", "ex", "result"],
-  "question": ["db", "question", "gold_sql"],
+  "question": ["db", "hardness", "question", "gold_sql"],
   "stage_kinds": ["text", "sql", "calibrate"]
 }

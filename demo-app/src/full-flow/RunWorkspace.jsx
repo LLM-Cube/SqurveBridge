@@ -313,6 +313,12 @@ function describeTarget(connection, configs, databases) {
   }
 }
 
+// With the live view, the per-job list, progress and raw log are kept for debugging, folded away.
+function BatchMonitorFrame({ live, summary, children }) {
+  if (!live) return children
+  return <details className="run-batch-details"><summary>{summary}</summary>{children}</details>
+}
+
 export default function RunWorkspace({
   selectedConnections = [],
   configs = [],
@@ -621,6 +627,8 @@ export default function RunWorkspace({
     return t('status.ready')
   }
 
+  const liveView = Boolean(liveEvaluation && experiment?.experiment_id && api)
+
   return <div className="board-section run-workspace">
     <header className="board-section-header">
       <div>
@@ -732,6 +740,17 @@ export default function RunWorkspace({
       </section>
     </div>
 
+    {liveView ? (
+      <LiveRun
+        key={experiment.experiment_id} t={t} api={api} experimentId={experiment.experiment_id}
+        onFinished={() => onViewComparison?.(experiment.experiment_id)}
+        onCancelCell={cellId => {
+          const job = jobs.find(item => item.cell_id === cellId)
+          if (job) cancelCell(job)
+        }}
+      />
+    ) : null}
+    <BatchMonitorFrame live={liveView} summary={t('run.batchDetails')}>
     <div className="run-batch-monitor" data-testid="run-batch-monitor">
       <div className="run-batch-jobs">
         <h3>{t('run.batchJobs')}</h3>
@@ -766,9 +785,6 @@ export default function RunWorkspace({
             })}
           </ul>}
       </div>
-      {liveEvaluation && experiment?.experiment_id && api
-        ? <LiveRun key={experiment.experiment_id} t={t} api={api} experimentId={experiment.experiment_id} onFinished={() => onViewComparison?.(experiment.experiment_id)} />
-        : null}
       <div className="run-progress-card">
         <div className="run-progress-heading">
           <div><strong>{progress.percent}%</strong><span>{progress.currentStage}</span></div>
@@ -801,6 +817,7 @@ export default function RunWorkspace({
             : null}
       </div>
     </div>
+    </BatchMonitorFrame>
 
     {error && <p className="error-banner" role="alert">{error}</p>}
     {rejections.length > 0 && (

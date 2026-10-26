@@ -44,8 +44,21 @@ function Verdict({ verdict, t }) {
     <div className={`showcase-verdict ${verdict.ex ? 'ok' : 'bad'}`}>
       <b>{verdict.ex ? `✓ ${t('showcase.hit')}` : `✗ ${t('showcase.miss')}`}</b>
       <pre>{verdict.pred_sql}</pre>
-      <div>{describeResult(verdict.result, t)}</div>
+      {verdict.result ? <div>{describeResult(verdict.result, t)}</div> : null}
     </div>
+  )
+}
+
+/** One method's progress row in the Config jobs list; the same row for a recording and a live run. */
+export function JobRow({ id, label, finished, status, done, total, stage, children }) {
+  return (
+    <li data-method={id} className={finished ? 'done' : 'live'}>
+      <b>{label}</b>
+      <span className="showcase-chip">{status}</span>
+      <div className="showcase-track"><div style={{ width: `${total ? (100 * done) / total : 0}%` }} /></div>
+      <small>{done}/{total}{stage ? ` · ${stage}` : ''}</small>
+      {children}
+    </li>
   )
 }
 

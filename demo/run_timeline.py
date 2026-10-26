@@ -12,13 +12,14 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable, Mapping, Sequence
+from functools import lru_cache
 
 _DECODER = json.JSONDecoder()
 _TRACE = "actor_trace="
 _STARTED = re.compile(r"开始处理样本\s+(\S+)\s*$")
 _ENTERED = re.compile(r"样本\s+(\S+)\s+@\s+(\S+)\s*$")
 _FINISHED = re.compile(r"样本\s+(\S+)\s+处理完成\s*\(([\d.]+)s\)")
-_TEXT_LIMIT = 240
+_TEXT_LIMIT = 160
 
 Judge = Callable[[Mapping, str], Mapping]
 
@@ -28,6 +29,7 @@ def _describe(value) -> str:
     if value is None:
         return ""
     if isinstance(value, str):
+        value = " ".join(value.split())
         return value if len(value) <= _TEXT_LIMIT else value[:_TEXT_LIMIT] + "…"
     if isinstance(value, (list, tuple)):
         head = ", ".join(str(item) for item in value[:6])
@@ -36,6 +38,54 @@ def _describe(value) -> str:
     if isinstance(value, dict):
         return ", ".join(f"{key}" for key in list(value)[:8])
     return str(value)
+
+
+_MIN_STAGE_SECONDS = 0.3
+
+
+def stage_summary(stage: Mapping) -> str:
+    """One line from what an evaluated stage recorded; the recorded replay uses the same line."""
+    runtime = stage.get("runtime") or {}
+    bits = [f"{stage.get('task_type', 'Task')} · {stage.get('status', 'observed')} · {runtime.get('call_count', 0)} call(s)"]
+    signals = [(k, v) for k, v in (stage.get("signals") or {}).items() if isinstance(v, (int, float)) and not isinstance(v, bool)]
+    bits += [f"{key}={value:g}" for key, value in signals[:3]]
+    for error in (runtime.get("errors") or [])[:1]:
+        bits.append(f"error: {str(error)[:80]}")
+    return " · ".join(bits)
+
+
+def stages_from_evaluation(sample: Mapping) -> list[dict]:
+    """The stages of one evaluated question, as the recorded replay shows them.
+
+    The question's measured tokens and act time are split across stages by each stage's
+    share of model calls. A sample without a token record keeps tokens as not provided.
+    """
+    stages = list(((sample.get("workflow") or {}).get("stages") or {}).items())
+    if not stages:
+        return []
+    calls = [max((stage.get("runtime") or {}).get("call_count") or 0, 0) for _, stage in stages]
+    shares = [count / sum(calls) if sum(calls) else 1 / len(calls) for count in calls]
+    tokens = sum((sample.get("tokens") or {}).values()) if sample.get("tokens") else None
+    elapsed = sample.get("act_elapsed_s") or 0
+    out = []
+    for (name, stage), share in zip(stages, shares):
+        is_sql = stage.get("task_type") == "GenerateTask"
+        out.append({
+            "name": name, "kind": "sql" if is_sql else "text",
+            "text": (sample.get("pred_sql") or "") if is_sql else stage_summary(stage),
+            "tokens": None if tokens is None else round(tokens * share),
+            "seconds": round(max(elapsed * share, _MIN_STAGE_SECONDS), 2),
+        })
+    return out
+
+
+def _live_summary(record: Mapping) -> str:
+    """While running, a stage line shaped like the replay's: actor · status · what it produced."""
+    actor = record.get("actor_class") or record.get("actor_name") or "Actor"
+    error = record.get("error")
+    if error:
+        return f"{actor} · failed · error: {str(error).splitlines()[0][:80]}"
+    return f"{actor} · observed · {_describe(record.get('result'))}"
 
 
 def _parse(log_text: str) -> dict[str, dict]:
@@ -59,7 +109,7 @@ def _parse(log_text: str) -> dict[str, dict]:
             entry["stages"].append({
                 "name": record.get("stage_name") or record.get("actor_name") or "",
                 "kind": "sql" if is_sql else "text",
-                "text": (result if isinstance(result, str) else "") if is_sql else _describe(result),
+                "text": (result if isinstance(result, str) else "") if is_sql and not record.get("error") else _live_summary(record),
                 "seconds": record.get("elapsed_s"),
                 "state": "failed" if record.get("error") else "done",
                 "error": record.get("error"),
@@ -88,6 +138,28 @@ def _run(entry: dict | None) -> dict:
     return {"state": state, "stages": stages, "pred_sql": pred_sql, "ex": None, "result": None}
 
 
+@lru_cache(maxsize=4096)
+def gold_hardness(gold_sql: str | None) -> str | None:
+    """The evaluation's own hardness label for a gold query (None when it cannot be parsed)."""
+    from reproduce.eval.bundle.build import auto_hardness
+
+    return auto_hardness(gold_sql)
+
+
+def _evaluated_run(sample: Mapping) -> dict:
+    recorded = list(((sample.get("workflow") or {}).get("stages") or {}).values())
+    stages = []
+    for stage, source in zip(stages_from_evaluation(sample), recorded):
+        errors = [str(error) for error in (source.get("runtime") or {}).get("errors") or []]
+        error = source.get("error") or (errors[0] if errors else None)
+        stages.append({**stage, "state": "failed" if error else "done", "error": error})
+    ex = sample.get("ex")
+    return {
+        "state": "done", "stages": stages, "pred_sql": sample.get("pred_sql") or "",
+        "ex": None if ex is None else bool(ex), "result": None, "verdict_source": "evaluation",
+    }
+
+
 def build_run_timeline(
     questions: Sequence[Mapping],
     log_text: str,
@@ -95,6 +167,7 @@ def build_run_timeline(
     method: str,
     judge: Judge | None = None,
     since: int = 0,
+    evaluation: Sequence[Mapping] | None = None,
 ) -> dict:
     """The timeline of one method's run.
 
@@ -102,26 +175,36 @@ def build_run_timeline(
     prediction into ``{"ex": bool, "result": {...}}``; without it the verdict stays unknown
     rather than being guessed. ``since`` is a cursor from an earlier response: only questions
     from that index onward are returned, because earlier ones were already complete.
+
+    ``evaluation`` is the cell's per-sample score bundle once it exists. Its questions then
+    read exactly as the recorded replay would show them (stages, tokens, verdict, hardness),
+    and every question is returned whatever ``since`` says, so a client replaces what it saw.
     """
     samples = _parse(log_text)
+    evaluated = {str(sample.get("instance_id")): sample for sample in evaluation or []}
     items = []
     for index, question in enumerate(questions):
-        run = _run(samples.get(str(question.get("instance_id"))))
+        key = str(question.get("instance_id"))
+        sample = evaluated.get(key)
+        run = _evaluated_run(sample) if sample else _run(samples.get(key))
         if judge is not None and run["state"] == "done" and run["pred_sql"]:
             verdict = judge(question, run["pred_sql"])
-            run["ex"] = verdict.get("ex")
             run["result"] = verdict.get("result")
+            if not sample:
+                run["ex"] = verdict.get("ex")
         items.append({
             "index": index,
-            "id": str(question.get("instance_id")),
+            "id": key,
             "db": question.get("db_id"),
+            "hardness": (sample or {}).get("hardness") or gold_hardness(question.get("query")),
             "question": question.get("question"),
             "gold_sql": question.get("query"),
             "run": run,
         })
     cursor = next((item["index"] for item in items if item["run"]["state"] != "done"), len(items))
-    since = max(0, min(int(since), len(items)))
-    return {"method": method, "total": len(items), "cursor": cursor, "questions": items[since:]}
+    corrected = bool(evaluated)
+    since = 0 if corrected else max(0, min(int(since), len(items)))
+    return {"method": method, "total": len(items), "cursor": cursor, "corrected": corrected, "questions": items[since:]}
 
 
 def _ordered(sql: str) -> bool:

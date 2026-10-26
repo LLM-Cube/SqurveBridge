@@ -189,6 +189,12 @@ test('an adopted experiment shows the live question view fed by its timeline', a
   }))
   await waitFor(() => screen.getByText('Which pets are oldest?'))
   assert.ok(requested.some(path => path.startsWith('/api/experiments/exp-live/timeline')))
+  // The live view leads; the per-job list and raw log are folded away beneath it.
+  const folded = screen.getByTestId('run-batch-monitor').closest('details')
+  assert.ok(folded && !folded.open)
+  assert.equal(folded.querySelector('summary').textContent, 'run.batchDetails')
+  const live = screen.getByRole('region', { name: 'run.liveTitle' })
+  assert.ok(live.compareDocumentPosition(folded) & Node.DOCUMENT_POSITION_FOLLOWING)
   cleanup()
 })
 

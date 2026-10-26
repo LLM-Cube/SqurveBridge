@@ -32,6 +32,7 @@ if str(_project_root) not in sys.path:
 from demo import model_catalog
 from demo import comparison_snapshots
 from demo.run_evidence import run_evidence
+from core.evidence import Availability
 from demo.run_timeline import build_run_timeline, cap_text, make_judge, withhold_content
 from demo.experiments import MAX_CELLS, ExperimentConflict, ExperimentNotFound, ExperimentScheduler
 from demo.variants import VariantError, normalize_stages, runner_overrides, swappable_actors, variant_key, variant_label
@@ -2531,16 +2532,39 @@ def _judge_for(job_id: str):
     return _job_judges[job_id]
 
 
+def _job_evaluation(job: dict) -> tuple[list[dict] | None, str]:
+    """A finished job's per-sample score bundle, with its field availability.
+
+    Only a completed job is corrected: a running or resumed job may still hold the bundle of
+    an earlier attempt. An unreadable bundle keeps the live timeline instead of failing it.
+    """
+    if job.get("status") != "completed":
+        return None, Availability.NOT_PROVIDED
+    path = _run_dir / str(job.get("job_id")) / "score-bundle" / "scores.json"
+    if not path.is_file():
+        return None, Availability.NOT_PROVIDED
+    try:
+        samples = json.loads(path.read_text(encoding="utf-8")).get("per_sample")
+    except (OSError, ValueError, AttributeError):
+        return None, Availability.COLLECTION_FAILED
+    if not isinstance(samples, list):
+        return None, Availability.COLLECTION_FAILED
+    return [sample for sample in samples if isinstance(sample, dict)], Availability.PRESENT
+
+
 def _job_timeline(job: dict, since: int) -> dict:
     log_path = _resolve_job_log_path(job)
     try:
         log_text = log_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         log_text = ""
+    evaluation, availability = _job_evaluation(job)
     timeline = build_run_timeline(
         _run_questions(log_text), log_text,
         method=str(job.get("method") or ""), judge=_judge_for(str(job.get("job_id"))), since=since,
+        evaluation=evaluation,
     )
+    timeline["evaluation"] = availability
     if _hosted() and str(job.get("dataset")) not in _HOSTED_PUBLIC_BENCHMARKS:
         withhold_content(timeline)
     cap_text(timeline, _TIMELINE_SQL_LIMIT)

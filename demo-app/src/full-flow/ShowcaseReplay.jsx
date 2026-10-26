@@ -16,7 +16,7 @@ import {
   summarize,
   totalsAt,
 } from './showcaseModel.js'
-import QuestionLanes from './RunLanes.jsx'
+import QuestionLanes, { JobRow } from './RunLanes.jsx'
 import { lanesFromRecording } from './runLanes.js'
 import './showcase.css'
 
@@ -157,12 +157,10 @@ function RunPhase({ flow, local, hover, t }) {
               const live = lane.stages.findIndex(window => stageProgress(window, inQuestion).state === 'run')
               const stage = !finished && live >= 0 ? question.methods[id].stages[live].name : null
               return (
-                <li key={id} data-method={id} className={finished ? 'done' : 'live'}>
-                  <b>{labelOf(id)} → {benchmarkLabel()}</b>
-                  <span className="showcase-chip">{finished ? t('plan.status.done') : t('plan.status.running')}</span>
-                  <div className="showcase-track"><div style={{ width: `${(100 * sum.judged) / n}%` }} /></div>
-                  <small>{sum.judged}/{n}{stage ? ` · ${stage}` : ''}</small>
-                </li>
+                <JobRow
+                  key={id} id={id} label={`${labelOf(id)} → ${benchmarkLabel()}`} finished={finished}
+                  status={finished ? t('plan.status.done') : t('plan.status.running')} done={sum.judged} total={n} stage={stage}
+                />
               )
             })}
           </ul>

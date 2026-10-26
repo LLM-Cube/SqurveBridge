@@ -31,9 +31,9 @@ class ActorTraceIdentityTests(unittest.TestCase):
         self.assertEqual(logged["instance_id"], "dev_7")
 
 
-def trace(instance_id, stage, output, result, elapsed, error=None):
+def trace(instance_id, stage, output, result, elapsed, error=None, actor_class=None):
     record = {
-        "instance_id": instance_id, "actor_name": stage, "stage_name": stage,
+        "instance_id": instance_id, "actor_name": stage, "actor_class": actor_class, "stage_name": stage,
         "output_name": output, "elapsed_s": elapsed, "result": result, "error": error,
     }
     return "[2026-10-26 10:00:00] [INFO]  actor_trace=" + json.dumps(record) + ' {"trailing": "noise"}'
@@ -83,6 +83,15 @@ class RunTimelineTests(unittest.TestCase):
             [(stage["name"], stage["state"]) for stage in second["run"]["stages"]],
             [("reduce", "done")],
         )
+
+    def test_a_live_stage_reads_like_the_replays_one_line_summary(self):
+        text = log(
+            trace("dev_0", "reduce", "instance_schemas", ["singer.name", "singer.age"], 0.4, actor_class="C3SQLReducer"),
+            trace("dev_1", "reduce", "instance_schemas", None, 0.2, error="RateLimitError: slow down\nretry later", actor_class="C3SQLReducer"),
+        )
+        first, second = self.build(text)["questions"]
+        self.assertEqual(first["run"]["stages"][0]["text"], "C3SQLReducer · observed · 2 items: singer.name, singer.age")
+        self.assertEqual(second["run"]["stages"][0]["text"], "C3SQLReducer · failed · error: RateLimitError: slow down")
 
     def test_finished_sample_carries_its_final_sql(self):
         text = log(
@@ -328,6 +337,56 @@ class TimelineApiTests(unittest.TestCase):
             self.assertEqual(client.get("/api/evaluations/job1/timeline").json["questions"][0]["question"], "How many singers?")
             self.assertEqual(self.api.app.test_client().get("/api/evaluations/job1/timeline").status_code, 404)
 
+    def bundle(self, content):
+        from pathlib import Path
+        from unittest.mock import patch
+
+        bundle = Path(self.tmp.name) / "evaluations" / "job1" / "score-bundle"
+        bundle.mkdir(parents=True)
+        (bundle / "scores.json").write_text(content, encoding="utf-8")
+        patcher = patch.object(self.api, "_run_dir", Path(self.tmp.name) / "evaluations")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_a_finished_job_is_corrected_from_its_score_bundle(self):
+        self.bundle(json.dumps({"per_sample": [evaluated_sample(ex=0)]}))
+        self.api._jobs["job1"]["status"] = "completed"
+        body = self.client.get("/api/evaluations/job1/timeline?since=1").json
+        self.assertTrue(body["corrected"])
+        first = body["questions"][0]
+        self.assertEqual(first["run"]["stages"][0]["text"], "ReduceTask · observed · 3 call(s) · pred_schema_count=21")
+        self.assertIs(first["run"]["ex"], False)
+
+    def test_a_running_job_ignores_a_score_bundle_from_an_earlier_attempt(self):
+        self.bundle(json.dumps({"per_sample": [evaluated_sample(ex=0)]}))
+        self.assertFalse(self.client.get("/api/evaluations/job1/timeline").json["corrected"])
+
+    def test_an_unreadable_score_bundle_keeps_the_live_timeline(self):
+        self.bundle("{not json")
+        self.api._jobs["job1"]["status"] = "completed"
+        body = self.client.get("/api/evaluations/job1/timeline").json
+        self.assertFalse(body["corrected"])
+        self.assertEqual(body["evaluation"], "collection_failed")
+        self.assertIs(body["questions"][0]["run"]["ex"], True)
+
+    def test_hosted_correction_still_withholds_unpublished_benchmark_content(self):
+        import os
+        from unittest.mock import patch
+
+        self.bundle(json.dumps({"per_sample": [evaluated_sample()]}))
+        self.api._jobs["job1"].update(status="completed", dataset="bird")
+        self.api._job_owners["job1"] = "visitor"
+        with patch.dict(os.environ, {"SQURVE_DEPLOYMENT_TARGET": "hf-space"}):
+            client = self.api.app.test_client()
+            client.set_cookie("squrve_session", "visitor")
+            body = client.get("/api/evaluations/job1/timeline").json
+        self.assertTrue(body["corrected"])
+        first = body["questions"][0]
+        self.assertIsNone(first["question"])
+        self.assertEqual(first["run"]["pred_sql"], "")
+        self.assertEqual({stage["text"] for stage in first["run"]["stages"]}, {""})
+        self.assertNotIn("FROM singer", json.dumps(body))
+
     def test_polling_does_not_run_the_same_sql_again(self):
         self.client.get("/api/evaluations/job1/timeline")
         self.client.get("/api/evaluations/job1/timeline")
@@ -373,3 +432,99 @@ class ContractTests(unittest.TestCase):
             for key in contract["stage"]:
                 self.assertIn(key, stage)
             self.assertIn(stage["kind"], contract["stage_kinds"])
+
+
+def evaluated_sample(**overrides):
+    """One per-sample record of a score bundle, trimmed to what the timeline reads."""
+    def stage(task_type, status, signals):
+        return {"task_type": task_type, "status": status, "signals": signals,
+                "runtime": {"call_count": 3, "elapsed_s": 76.292, "errors": []}}
+
+    sample = {
+        "instance_id": "dev_0", "db_id": "concert_singer", "hardness": "easy", "ex": 1,
+        "pred_sql": "SELECT COUNT(*) FROM singer;", "tokens": {"unknown": 4744}, "act_elapsed_s": 76.295,
+        "workflow": {"stages": {
+            "c3sql_reduce": stage("ReduceTask", "observed", {"gold_schema_count": None, "pred_schema_count": 21, "fatal_schema_miss": False}),
+            "c3sql_parse": stage("ParseTask", "observed", {"linked_schema_count": 15, "missing_gold_schemas": []}),
+            "c3sql_generate": stage("GenerateTask", "pass", {"candidate_count": 1}),
+        }},
+    }
+    sample.update(overrides)
+    return sample
+
+
+class EvaluatedStagesTests(unittest.TestCase):
+    """The stages of an evaluated question read exactly as the recorded replay shows them."""
+
+    def test_stages_match_the_recorded_replay_of_the_same_sample(self):
+        from demo.run_timeline import stages_from_evaluation
+
+        stages = stages_from_evaluation(evaluated_sample())
+        # Literal values from the committed replay fixture, question q1, C3SQL.
+        self.assertEqual(stages, [
+            {"name": "c3sql_reduce", "kind": "text", "text": "ReduceTask · observed · 3 call(s) · pred_schema_count=21", "tokens": 1581, "seconds": 25.43},
+            {"name": "c3sql_parse", "kind": "text", "text": "ParseTask · observed · 3 call(s) · linked_schema_count=15", "tokens": 1581, "seconds": 25.43},
+            {"name": "c3sql_generate", "kind": "sql", "text": "SELECT COUNT(*) FROM singer;", "tokens": 1581, "seconds": 25.43},
+        ])
+
+    def test_a_stage_error_is_named_in_its_summary(self):
+        from demo.run_timeline import stages_from_evaluation
+
+        sample = evaluated_sample()
+        sample["workflow"]["stages"]["c3sql_parse"]["runtime"]["errors"] = ["RateLimitError: slow down"]
+        self.assertTrue(stages_from_evaluation(sample)[1]["text"].endswith("· error: RateLimitError: slow down"))
+
+    def test_tokens_stay_not_provided_when_the_sample_has_no_token_record(self):
+        from demo.run_timeline import stages_from_evaluation
+
+        self.assertEqual({stage["tokens"] for stage in stages_from_evaluation(evaluated_sample(tokens={}))}, {None})
+
+
+class CorrectionTests(unittest.TestCase):
+    """Once a cell is evaluated, its timeline is the evaluation's, field for field."""
+
+    def build(self, text="", **kwargs):
+        from demo.run_timeline import build_run_timeline
+
+        return build_run_timeline(QUESTIONS, text, method="c3sql", **kwargs)
+
+    def test_an_evaluated_question_shows_the_evaluations_stages_verdict_and_hardness(self):
+        live = log(trace("dev_0", "gen", "pred_sql", "SELECT 9", 0.5), "样本 dev_0 处理完成 (0.5s)")
+        preview = {"ok": True, "n": 1, "head": [["6"]], "ms": 0.1}
+        timeline = self.build(live, evaluation=[evaluated_sample(ex=0)], judge=lambda q, sql: {"ex": True, "result": preview})
+        item = timeline["questions"][0]
+        self.assertTrue(timeline["corrected"])
+        self.assertEqual(item["hardness"], "easy")
+        self.assertEqual([stage["name"] for stage in item["run"]["stages"]], ["c3sql_reduce", "c3sql_parse", "c3sql_generate"])
+        self.assertEqual({stage["state"] for stage in item["run"]["stages"]}, {"done"})
+        self.assertEqual(item["run"]["state"], "done")
+        self.assertEqual(item["run"]["pred_sql"], "SELECT COUNT(*) FROM singer;")
+        # The verdict is the evaluation's; the live execution only supplies the result preview.
+        self.assertIs(item["run"]["ex"], False)
+        self.assertEqual(item["run"]["verdict_source"], "evaluation")
+        self.assertEqual(item["run"]["result"], preview)
+
+    def test_an_evaluated_stage_that_recorded_an_error_is_failed_not_done(self):
+        sample = evaluated_sample()
+        sample["workflow"]["stages"]["c3sql_parse"]["runtime"]["errors"] = ["RateLimitError: slow down"]
+        stages = self.build(evaluation=[sample])["questions"][0]["run"]["stages"]
+        self.assertEqual([stage["state"] for stage in stages], ["done", "failed", "done"])
+        self.assertEqual(stages[1]["error"], "RateLimitError: slow down")
+
+    def test_a_corrected_timeline_repeats_every_question_so_a_client_replaces_what_it_saw(self):
+        both = [evaluated_sample(), evaluated_sample(instance_id="dev_1", db_id="pets_1")]
+        timeline = self.build(evaluation=both, since=2)
+        self.assertEqual([item["index"] for item in timeline["questions"]], [0, 1])
+        self.assertEqual(timeline["cursor"], 2)
+        again = self.build(evaluation=both, since=2)
+        self.assertEqual(again, timeline)
+
+    def test_a_question_missing_from_the_evaluation_keeps_its_live_content(self):
+        live = log(trace("dev_1", "gen", "pred_sql", "SELECT age FROM pets", 0.5), "样本 dev_1 处理完成 (0.5s)")
+        item = self.build(live, evaluation=[evaluated_sample()])["questions"][1]
+        self.assertEqual(item["run"]["pred_sql"], "SELECT age FROM pets")
+
+    def test_a_live_question_carries_the_hardness_of_its_gold_sql(self):
+        item = self.build()["questions"][0]
+        self.assertEqual(item["hardness"], "easy")
+        self.assertFalse(self.build()["corrected"])

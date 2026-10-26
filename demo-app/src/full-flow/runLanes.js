@@ -63,7 +63,7 @@ export function lanesFromTimeline(cells, index) {
     const stages = (run?.stages || []).map(stage => ({
       name: stage.name,
       kind: stage.kind,
-      text: stage.state === 'failed' ? `error: ${stage.error || 'failed'}` : stage.text,
+      text: stage.text || (stage.state === 'failed' ? `error: ${stage.error || 'failed'}` : ''),
       seconds: stage.seconds,
       tokens: stage.tokens,
       state: STAGE_STATE[stage.state] || 'idle',
