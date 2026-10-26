@@ -191,6 +191,16 @@ class JudgeTests(unittest.TestCase):
         })
         self.assertIsNone(judge(self.QUESTION, "SELECT 1")["ex"])
 
+    def test_a_finished_prediction_is_judged_once_however_often_it_is_polled(self):
+        judge, calls = self.judge({
+            "SELECT name FROM singer": {"ok": True, "rows": [("a",)], "ms": 1},
+            "SELECT 1": {"ok": True, "rows": [("a",)], "ms": 1},
+        })
+        first = judge(self.QUESTION, "SELECT 1")
+        second = judge(self.QUESTION, "SELECT 1")
+        self.assertEqual(first, second)
+        self.assertEqual(len(calls), 2)
+
     def test_the_gold_query_runs_once_per_question(self):
         judge, calls = self.judge({
             "SELECT name FROM singer": {"ok": True, "rows": [], "ms": 1},
@@ -199,6 +209,38 @@ class JudgeTests(unittest.TestCase):
         judge(self.QUESTION, "SELECT 1")
         judge(self.QUESTION, "SELECT 1")
         self.assertEqual([sql for _db, sql in calls].count("SELECT name FROM singer"), 1)
+
+
+class WithholdTests(unittest.TestCase):
+    def timeline(self):
+        stage = {"name": "generate", "kind": "sql", "text": "SELECT secret FROM t", "seconds": 1.0, "state": "done", "error": None}
+        run = {"state": "done", "stages": [stage], "pred_sql": "SELECT secret FROM t", "ex": True,
+               "result": {"ok": True, "n": 3, "head": [["private"]], "ms": 2.0}}
+        return {"questions": [{"index": 0, "id": "q", "db": "d", "question": "Q?", "gold_sql": "SELECT 1", "run": run}]}
+
+    def test_withholding_keeps_the_outcome_and_drops_every_piece_of_benchmark_content(self):
+        from demo.run_timeline import withhold_content
+
+        item = withhold_content(self.timeline())["questions"][0]
+        self.assertIsNone(item["question"])
+        self.assertIsNone(item["gold_sql"])
+        run = item["run"]
+        self.assertTrue(run["withheld"])
+        self.assertEqual(run["pred_sql"], "")
+        self.assertEqual(run["stages"][0]["text"], "")
+        self.assertEqual(run["stages"][0]["name"], "generate")
+        self.assertIs(run["ex"], True)
+        self.assertEqual(run["result"], {"ok": True, "n": 3, "ms": 2.0})
+        self.assertNotIn("private", json.dumps(item))
+        self.assertNotIn("secret", json.dumps(item))
+
+    def test_withholding_keeps_an_error_class_but_not_the_database_message(self):
+        from demo.run_timeline import withhold_content
+
+        timeline = self.timeline()
+        timeline["questions"][0]["run"]["result"] = {"ok": False, "error": "no such column: salary", "ms": 1}
+        run = withhold_content(timeline)["questions"][0]["run"]
+        self.assertEqual(run["result"], {"ok": False, "ms": 1})
 
 
 class TimelineApiTests(unittest.TestCase):
@@ -229,7 +271,7 @@ class TimelineApiTests(unittest.TestCase):
                 "[t] [INFO]  样本 dev_1 @ generate",
             ],
         ), encoding="utf-8")
-        for registry in (self.api._jobs, self.api._job_owners, self.api._job_credentials):
+        for registry in (self.api._jobs, self.api._job_owners, self.api._job_credentials, self.api._job_judges):
             registry.clear()
         self.api._jobs["job1"] = {
             "job_id": "job1", "dataset": "spider", "method": "c3sql", "status": "running",
@@ -276,10 +318,21 @@ class TimelineApiTests(unittest.TestCase):
             body = client.get("/api/evaluations/job1/timeline").json
             self.assertIsNone(body["questions"][0]["question"])
             self.assertIsNone(body["questions"][0]["gold_sql"])
-            self.assertEqual(body["questions"][0]["run"]["pred_sql"], "SELECT count(*) FROM singer")
+            run = body["questions"][0]["run"]
+            self.assertTrue(run["withheld"])
+            self.assertEqual(run["pred_sql"], "")
+            self.assertEqual(run["stages"][0]["text"], "")
+            self.assertIs(run["ex"], True)
+            self.assertNotIn("count(*)", json.dumps(body))
             self.api._jobs["job1"]["dataset"] = "spider"
             self.assertEqual(client.get("/api/evaluations/job1/timeline").json["questions"][0]["question"], "How many singers?")
             self.assertEqual(self.api.app.test_client().get("/api/evaluations/job1/timeline").status_code, 404)
+
+    def test_polling_does_not_run_the_same_sql_again(self):
+        self.client.get("/api/evaluations/job1/timeline")
+        self.client.get("/api/evaluations/job1/timeline")
+        self.client.get("/api/evaluations/job1/timeline?since=0")
+        self.assertEqual(self.api._timeline_execute.call_count, 2)  # gold and prediction of dev_0, once
 
     def test_an_experiment_timeline_gathers_its_cells(self):
         from unittest.mock import patch

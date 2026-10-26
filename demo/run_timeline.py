@@ -143,9 +143,12 @@ def make_judge(execute: Callable[[str, str], Mapping]) -> Judge:
     cannot run, the verdict is unknown: a missing reference is not a wrong answer.
     """
     gold_cache: dict[str, Mapping] = {}
+    verdicts: dict[tuple[str, str], dict] = {}
 
     def judge(question: Mapping, pred_sql: str) -> dict:
         key = str(question.get("instance_id"))
+        if (key, pred_sql) in verdicts:
+            return verdicts[(key, pred_sql)]
         db_id = str(question.get("db_id"))
         if key not in gold_cache:
             gold_cache[key] = execute(db_id, str(question.get("query") or ""))
@@ -153,11 +156,43 @@ def make_judge(execute: Callable[[str, str], Mapping]) -> Judge:
         predicted = execute(db_id, pred_sql)
         result = _preview(predicted)
         if not gold.get("ok"):
-            return {"ex": None, "result": result}
+            return {"ex": None, "result": result}  # not cached: the reference may become runnable
         if not predicted.get("ok"):
-            return {"ex": False, "result": result}
-        a, b = list(gold.get("rows") or []), list(predicted.get("rows") or [])
-        same = a == b if _ordered(str(question.get("query"))) else sorted(map(repr, a)) == sorted(map(repr, b))
-        return {"ex": same, "result": result}
+            verdicts[(key, pred_sql)] = {"ex": False, "result": result}
+        else:
+            expected, actual = list(gold.get("rows") or []), list(predicted.get("rows") or [])
+            same = expected == actual if _ordered(str(question.get("query"))) else sorted(map(repr, expected)) == sorted(map(repr, actual))
+            verdicts[(key, pred_sql)] = {"ex": same, "result": result}
+        return verdicts[(key, pred_sql)]
 
     return judge
+
+
+def withhold_content(timeline: dict) -> dict:
+    """Keep what happened (stages, outcome, row counts) but none of the benchmark's own text.
+
+    For benchmarks a hosted Space does not publish: question, gold SQL, stage outputs, the
+    prediction, result rows and database error messages are all dropped.
+    """
+    for item in timeline["questions"]:
+        item["question"] = item["gold_sql"] = None
+        run = item["run"]
+        run["withheld"] = True
+        run["pred_sql"] = ""
+        for stage in run["stages"]:
+            stage["text"] = ""
+            stage["error"] = "withheld" if stage.get("error") else None
+        result = run.get("result")
+        if result:
+            run["result"] = {key: value for key, value in result.items() if key in {"ok", "n", "ms"}}
+    return timeline
+
+
+def cap_text(timeline: dict, limit: int) -> dict:
+    """Bound the size of every free-text field a client receives."""
+    for item in timeline["questions"]:
+        run = item["run"]
+        run["pred_sql"] = (run["pred_sql"] or "")[:limit]
+        for stage in run["stages"]:
+            stage["text"] = (stage.get("text") or "")[:limit]
+    return timeline

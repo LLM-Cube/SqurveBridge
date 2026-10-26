@@ -26,6 +26,7 @@ export default {
   'run.liveTitle': 'Live run',
   'run.liveWaiting': 'Waiting for the first questions…',
   'run.liveUnavailable': 'Live view unavailable; the batch log below still updates.',
+  'showcase.withheld': 'SQL and results are not shown for this benchmark.',
   'showcase.noSql': 'No SQL produced',
   'showcase.unjudged': 'Not judged yet',
   'showcase.hit': 'EX match',

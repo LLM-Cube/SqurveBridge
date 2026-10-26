@@ -59,6 +59,17 @@ test('a failed stage and an empty prediction are reported, never left blank', ()
   assert.match(html, /no SQL/i)
 })
 
+test('a run whose content is withheld still shows hit or miss, not a missing SQL', () => {
+  const withheld = ex => run('done', [stage('generate', 'done', { kind: 'sql', text: '' })], { withheld: true, ex, result: { ok: true, n: 3 } })
+  const lanes = lanesFromTimeline([wire('a', [question(0, { a: withheld(true) })]), wire('b', [question(0, { b: withheld(false) })])], 0)
+  assert.deepEqual(lanes.map(lane => lane.verdict.ex), [true, false])
+  const html = renderLanes(lanes)
+  assert.match(html, /EX match/)
+  assert.match(html, /EX mismatch/)
+  assert.match(html, /not shown/i)
+  assert.doesNotMatch(html, /No SQL produced/)
+})
+
 test('the scoreboard counts only judged questions and treats an unjudged one as undecided', () => {
   const items = [
     question(0, { c3sql: run('done', [], { ex: true, pred_sql: 'x' }) }),

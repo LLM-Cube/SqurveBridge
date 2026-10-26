@@ -73,6 +73,7 @@ export function lanesFromTimeline(cells, index) {
         ex: run?.ex ?? null,
         pred_sql: run?.pred_sql || '',
         result: run?.result || null,
+        withheld: Boolean(run?.withheld),
       },
     }
   })

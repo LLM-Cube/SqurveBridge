@@ -26,6 +26,7 @@ export default {
   'run.liveTitle': '实时运行',
   'run.liveWaiting': '等待第一批题目…',
   'run.liveUnavailable': '实时画面暂不可用；下方批处理日志仍在更新。',
+  'showcase.withheld': '该基准的 SQL 与结果不对外展示。',
   'showcase.noSql': '未生成 SQL',
   'showcase.unjudged': '尚未判定',
   'showcase.hit': 'EX 命中',

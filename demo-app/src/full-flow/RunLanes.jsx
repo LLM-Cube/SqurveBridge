@@ -22,6 +22,14 @@ function Stage({ stage, t }) {
 
 function Verdict({ verdict, t }) {
   if (!verdict.ready) return <div className="showcase-verdict wait">{t('showcase.waiting')}</div>
+  if (verdict.withheld && verdict.ex !== null && verdict.ex !== undefined) {
+    return (
+      <div className={`showcase-verdict ${verdict.ex ? 'ok' : 'bad'}`}>
+        <b>{verdict.ex ? `✓ ${t('showcase.hit')}` : `✗ ${t('showcase.miss')}`}</b>
+        <div>{t('showcase.withheld')}</div>
+      </div>
+    )
+  }
   if (!verdict.pred_sql) return <div className="showcase-verdict bad"><b>✗ {t('showcase.noSql')}</b></div>
   if (verdict.ex === null || verdict.ex === undefined) {
     return (

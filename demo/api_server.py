@@ -16,7 +16,7 @@ import tempfile
 import threading
 import time
 import uuid
-from collections import Counter
+from collections import Counter, OrderedDict
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
@@ -32,7 +32,7 @@ if str(_project_root) not in sys.path:
 from demo import model_catalog
 from demo import comparison_snapshots
 from demo.run_evidence import run_evidence
-from demo.run_timeline import build_run_timeline, make_judge
+from demo.run_timeline import build_run_timeline, cap_text, make_judge, withhold_content
 from demo.experiments import MAX_CELLS, ExperimentConflict, ExperimentNotFound, ExperimentScheduler
 from demo.variants import VariantError, normalize_stages, runner_overrides, swappable_actors, variant_key, variant_label
 from demo.deployment import deployment_features, deployment_target, route_denial
@@ -2517,6 +2517,20 @@ def _run_questions(log_text: str) -> list[dict]:
     return []
 
 
+_JUDGE_CACHE_SIZE = 64
+_job_judges: OrderedDict = OrderedDict()
+
+
+def _judge_for(job_id: str):
+    """One judge per job, so a finished prediction is executed once however often it is polled."""
+    if job_id not in _job_judges:
+        _job_judges[job_id] = make_judge(_timeline_execute)
+        while len(_job_judges) > _JUDGE_CACHE_SIZE:
+            _job_judges.popitem(last=False)
+    _job_judges.move_to_end(job_id)
+    return _job_judges[job_id]
+
+
 def _job_timeline(job: dict, since: int) -> dict:
     log_path = _resolve_job_log_path(job)
     try:
@@ -2525,15 +2539,11 @@ def _job_timeline(job: dict, since: int) -> dict:
         log_text = ""
     timeline = build_run_timeline(
         _run_questions(log_text), log_text,
-        method=str(job.get("method") or ""), judge=make_judge(_timeline_execute), since=since,
+        method=str(job.get("method") or ""), judge=_judge_for(str(job.get("job_id"))), since=since,
     )
-    withhold = _hosted() and str(job.get("dataset")) not in _HOSTED_PUBLIC_BENCHMARKS
-    for item in timeline["questions"]:
-        if withhold:
-            item["question"] = item["gold_sql"] = None
-        for stage in item["run"]["stages"]:
-            stage["text"] = (stage.get("text") or "")[:_TIMELINE_SQL_LIMIT]
-        item["run"]["pred_sql"] = (item["run"]["pred_sql"] or "")[:_TIMELINE_SQL_LIMIT]
+    if _hosted() and str(job.get("dataset")) not in _HOSTED_PUBLIC_BENCHMARKS:
+        withhold_content(timeline)
+    cap_text(timeline, _TIMELINE_SQL_LIMIT)
     return {"job_id": job.get("job_id"), "dataset": job.get("dataset"), "status": job.get("status"), **timeline}
 
 
