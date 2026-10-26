@@ -88,3 +88,30 @@ test('says tokens are not provided instead of showing zero when no stage reporte
   await waitFor(() => screen.getByText(/tokens not provided/))
   assert.doesNotMatch(screen.getByText(/tokens not provided/).textContent, /0 tok/)
 })
+
+test('a finished run can be scrubbed and replayed, and a watched run reports that it finished', async () => {
+  cleanup()
+  const hit = (n) => ({ state: 'done', stages: [stage('generate', 'done', `SELECT ${n}`)], pred_sql: `SELECT ${n}`, ex: true, result: { ok: true, n: 1, head: [[String(n)]] } })
+  const { api } = fakeApi([
+    snapshot('running', [item(0, { ...idle, state: 'running', stages: [stage('reduce', 'running')] }), item(1, idle)]),
+    snapshot('completed', [item(0, hit(1)), item(1, hit(2))], { cursor: 2 }),
+  ])
+  const finished = []
+  render(React.createElement(LiveRun, { t, api, experimentId: 'exp1', pollMs: 5, replayMs: 5, onFinished: status => finished.push(status) }))
+  await waitFor(() => screen.getByLabelText('Scrub through questions'))
+  assert.deepEqual(finished, ['completed'])
+  const { fireEvent } = await import('@testing-library/react')
+  fireEvent.change(screen.getByLabelText('Scrub through questions'), { target: { value: '1' } })
+  await waitFor(() => screen.getByText('Question 0?'))
+  fireEvent.click(screen.getByText('Replay from the start'))
+  await waitFor(() => screen.getByText('Question 1?'))
+})
+
+test('reopening a run that already finished does not switch the view', async () => {
+  cleanup()
+  const { api } = fakeApi([snapshot('completed', [item(0, idle)])])
+  const finished = []
+  render(React.createElement(LiveRun, { t, api, experimentId: 'exp1', pollMs: 5, onFinished: status => finished.push(status) }))
+  await waitFor(() => screen.getByText('Question 0?'))
+  assert.deepEqual(finished, [])
+})

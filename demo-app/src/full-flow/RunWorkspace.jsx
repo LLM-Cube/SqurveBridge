@@ -767,7 +767,7 @@ export default function RunWorkspace({
           </ul>}
       </div>
       {liveEvaluation && experiment?.experiment_id && api
-        ? <LiveRun key={experiment.experiment_id} t={t} api={api} experimentId={experiment.experiment_id} />
+        ? <LiveRun key={experiment.experiment_id} t={t} api={api} experimentId={experiment.experiment_id} onFinished={() => onViewComparison?.(experiment.experiment_id)} />
         : null}
       <div className="run-progress-card">
         <div className="run-progress-heading">

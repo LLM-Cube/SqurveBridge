@@ -19,16 +19,24 @@ function merge(previous, response) {
 }
 
 /** The run as it happens: the same lanes as the recorded replay, fed by the live timeline. */
-export default function LiveRun({ t, api, experimentId, pollMs = 1500, labelFor = id => id }) {
+export default function LiveRun({ t, api, experimentId, pollMs = 1500, replayMs = 1500, labelFor = id => id, onFinished }) {
   const [cells, setCells] = useState({})
   const [status, setStatus] = useState('queued')
   const [failed, setFailed] = useState(false)
+  const [picked, setPicked] = useState(null)
+  const [replaying, setReplaying] = useState(false)
   const cursor = useRef(0)
+  const wasActive = useRef(false)
+  const finished = useRef(onFinished)
+  finished.current = onFinished
 
   useEffect(() => {
     let stopped = false
     let timer
     cursor.current = 0
+    wasActive.current = false
+    setPicked(null)
+    setReplaying(false)
     setCells({})
     setFailed(false)
     const poll = async () => {
@@ -39,7 +47,13 @@ export default function LiveRun({ t, api, experimentId, pollMs = 1500, labelFor 
         setCells(previous => merge(previous, response))
         setStatus(response.status)
         setFailed(false)
-        if (!ACTIVE.has(response.status)) return
+        if (ACTIVE.has(response.status)) wasActive.current = true
+        else {
+          // Only a run watched while it was going switches the view; reopening an old one does not.
+          if (wasActive.current && response.status === 'completed') finished.current?.(response.status)
+          wasActive.current = false
+          return
+        }
       } catch {
         if (stopped) return
         setFailed(true)
@@ -56,13 +70,23 @@ export default function LiveRun({ t, api, experimentId, pollMs = 1500, labelFor 
     questions: Object.values(cell.byIndex).sort((a, b) => a.index - b.index),
   })), [cells, labelFor])
 
+  const total = Math.max(0, ...timelineCells.map(cell => cell.total || 0))
+  const over = !ACTIVE.has(status)
+  useEffect(() => {
+    if (!replaying) return undefined
+    const timer = setInterval(() => setPicked(current => {
+      if (current === null || current + 1 >= total) { setReplaying(false); return current === null ? total - 1 : current }
+      return current + 1
+    }), replayMs)
+    return () => clearInterval(timer)
+  }, [replaying, total, replayMs])
+
   const seen = timelineCells.some(cell => cell.questions.length)
   if (!seen) {
     return <p className="showcase-empty">{failed ? t('run.liveUnavailable') : t('run.liveWaiting')}</p>
   }
-  const index = focusOf(timelineCells)
+  const index = over && picked !== null ? Math.min(picked, Math.max(0, total - 1)) : focusOf(timelineCells)
   const question = timelineCells.flatMap(cell => cell.questions).find(item => item.index === index)
-  const total = Math.max(...timelineCells.map(cell => cell.total || 0))
   const board = scoreboard(timelineCells)
   const ended = ['cancelled', 'failed'].includes(status) ? t(`run.live.${status}`) : ''
   return (
@@ -77,6 +101,15 @@ export default function LiveRun({ t, api, experimentId, pollMs = 1500, labelFor 
           )
         })}
       </ul>
+      {over && total > 1 ? (
+        <div className="showcase-scrub">
+          <button type="button" onClick={() => { setPicked(0); setReplaying(true) }}>{t('run.liveReplay')}</button>
+          <input
+            type="range" min={1} max={total} value={index + 1} aria-label={t('run.liveScrub')}
+            onChange={event => { setReplaying(false); setPicked(Number(event.target.value) - 1) }}
+          />
+        </div>
+      ) : null}
       {ended ? <p className="showcase-empty" role="status">{ended}</p> : null}
       {failed ? <p className="showcase-empty">{t('run.liveUnavailable')}</p> : null}
       <QuestionLanes
