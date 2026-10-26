@@ -31,9 +31,9 @@ class ActorTraceIdentityTests(unittest.TestCase):
         self.assertEqual(logged["instance_id"], "dev_7")
 
 
-def trace(instance_id, stage, output, result, elapsed, error=None):
+def trace(instance_id, stage, output, result, elapsed, error=None, actor_class=None):
     record = {
-        "instance_id": instance_id, "actor_name": stage, "stage_name": stage,
+        "instance_id": instance_id, "actor_name": stage, "actor_class": actor_class, "stage_name": stage,
         "output_name": output, "elapsed_s": elapsed, "result": result, "error": error,
     }
     return "[2026-10-26 10:00:00] [INFO]  actor_trace=" + json.dumps(record) + ' {"trailing": "noise"}'
@@ -83,6 +83,15 @@ class RunTimelineTests(unittest.TestCase):
             [(stage["name"], stage["state"]) for stage in second["run"]["stages"]],
             [("reduce", "done")],
         )
+
+    def test_a_live_stage_reads_like_the_replays_one_line_summary(self):
+        text = log(
+            trace("dev_0", "reduce", "instance_schemas", ["singer.name", "singer.age"], 0.4, actor_class="C3SQLReducer"),
+            trace("dev_1", "reduce", "instance_schemas", None, 0.2, error="RateLimitError: slow down\nretry later", actor_class="C3SQLReducer"),
+        )
+        first, second = self.build(text)["questions"]
+        self.assertEqual(first["run"]["stages"][0]["text"], "C3SQLReducer · observed · 2 items: singer.name, singer.age")
+        self.assertEqual(second["run"]["stages"][0]["text"], "C3SQLReducer · failed · error: RateLimitError: slow down")
 
     def test_finished_sample_carries_its_final_sql(self):
         text = log(

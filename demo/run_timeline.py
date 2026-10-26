@@ -78,6 +78,15 @@ def stages_from_evaluation(sample: Mapping) -> list[dict]:
     return out
 
 
+def _live_summary(record: Mapping) -> str:
+    """While running, a stage line shaped like the replay's: actor · status · what it produced."""
+    actor = record.get("actor_class") or record.get("actor_name") or "Actor"
+    error = record.get("error")
+    if error:
+        return f"{actor} · failed · error: {str(error).splitlines()[0][:80]}"
+    return f"{actor} · observed · {_describe(record.get('result'))}"
+
+
 def _parse(log_text: str) -> dict[str, dict]:
     samples: dict[str, dict] = {}
 
@@ -99,7 +108,7 @@ def _parse(log_text: str) -> dict[str, dict]:
             entry["stages"].append({
                 "name": record.get("stage_name") or record.get("actor_name") or "",
                 "kind": "sql" if is_sql else "text",
-                "text": (result if isinstance(result, str) else "") if is_sql else _describe(result),
+                "text": (result if isinstance(result, str) else "") if is_sql and not record.get("error") else _live_summary(record),
                 "seconds": record.get("elapsed_s"),
                 "state": "failed" if record.get("error") else "done",
                 "error": record.get("error"),
