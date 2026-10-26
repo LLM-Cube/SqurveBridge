@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import QuestionLanes from './RunLanes.jsx'
+import QuestionLanes, { JobRow } from './RunLanes.jsx'
 import { focusOf, lanesFromTimeline, scoreboard } from './runLanes.js'
 
 const ACTIVE = new Set(['queued', 'running'])
@@ -146,15 +146,14 @@ export default function LiveRun({
       <ul className="showcase-jobs" aria-label={t('run.liveScore')}>
         {timelineCells.map(cell => {
           const row = board[cell.method]
-          const over = !ACTIVE.has(cell.status)
-          const stage = over ? '' : currentStage(cell)
+          const cellDone = !ACTIVE.has(cell.status)
+          const stage = cellDone ? '' : currentStage(cell)
           return (
-            <li key={cell.cell_id} data-method={cell.method} className={over ? 'done' : 'live'}>
-              <b>{cell.label} → {cell.dataset}</b>
-              <span className="showcase-chip">{t(`run.live.status.${cell.status}`)}</span>
-              <div className="showcase-track"><div style={{ width: `${row.total ? (100 * row.done) / row.total : 0}%` }} /></div>
-              <small>{row.done}/{row.total}{stage ? ` · ${stage}` : ''}</small>
-              {!over && onCancelCell ? (
+            <JobRow
+              key={cell.cell_id} id={cell.method} label={`${cell.label} → ${cell.dataset}`} finished={cellDone}
+              status={t(`run.live.status.${cell.status}`)} done={row.done} total={row.total} stage={stage}
+            >
+              {!cellDone && onCancelCell ? (
                 <button
                   type="button" className="showcase-cancel" onClick={() => onCancelCell(cell.cell_id)}
                   aria-label={t('run.liveCancelCell', { name: cell.label, dataset: cell.dataset })}
@@ -165,7 +164,7 @@ export default function LiveRun({
               <small className="showcase-jobmeta">
                 EX {row.ex}/{row.judged} · {row.tokens === null ? t('run.liveNoTokens') : `${row.tokens} tok`} · {row.seconds === null ? '—' : `${row.seconds.toFixed(1)}s`}
               </small>
-            </li>
+            </JobRow>
           )
         })}
       </ul>
@@ -186,6 +185,12 @@ export default function LiveRun({
         lanes={lanes}
       />
       <p className="showcase-note" role="note">{t(allCorrected ? 'run.liveNoteCorrected' : 'run.liveNote')}</p>
+      {over ? null : (
+        <section className="showcase-panel showcase-results-pending">
+          <h3>{t('run.liveResults')}</h3>
+          <p className="showcase-empty">{t('showcase.run.passiveRunning')}</p>
+        </section>
+      )}
     </section>
   )
 }

@@ -819,7 +819,7 @@ export default function RunWorkspace({
     </div>
     </BatchMonitorFrame>
 
-    {error &&<p className="error-banner" role="alert">{error}</p>}
+    {error && <p className="error-banner" role="alert">{error}</p>}
     {rejections.length > 0 && (
       <ul className="run-rejections" data-testid="run-rejections">
         {rejections.map(item => (

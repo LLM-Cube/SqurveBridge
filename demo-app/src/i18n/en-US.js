@@ -37,6 +37,7 @@ export default {
   'run.liveNote': 'Live run: stage outputs come from the run log, verdicts from read-only execution of the prediction and gold SQL; each cell is corrected from its score bundle when it ends, and tokens arrive then.',
   'run.liveNoteCorrected': 'Corrected from the score bundle: stages, verdicts and hardness come from the evaluation; per-question tokens are measured and split by the share of model calls per stage.',
   'run.batchDetails': 'Batch log and job details',
+  'run.liveResults': 'Experiment results',
   'run.liveScore': 'Running score',
   'run.live.cancelled': 'Cancelled; finished questions stay above.',
   'run.live.failed': 'Run failed; finished questions stay above and the run can resume from its checkpoint.',

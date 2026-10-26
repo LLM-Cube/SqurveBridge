@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable, Mapping, Sequence
+from functools import lru_cache
 
 _DECODER = json.JSONDecoder()
 _TRACE = "actor_trace="
@@ -137,23 +138,21 @@ def _run(entry: dict | None) -> dict:
     return {"state": state, "stages": stages, "pred_sql": pred_sql, "ex": None, "result": None}
 
 
-_hardness_cache: dict[str, str | None] = {}
-
-
+@lru_cache(maxsize=4096)
 def gold_hardness(gold_sql: str | None) -> str | None:
     """The evaluation's own hardness label for a gold query (None when it cannot be parsed)."""
-    if not gold_sql:
-        return None
-    if gold_sql not in _hardness_cache:
-        from reproduce.metrics.sql_parser import SQLFeatureExtractor
+    from reproduce.eval.bundle.build import auto_hardness
 
-        parser = SQLFeatureExtractor(gold_sql)
-        _hardness_cache[gold_sql] = parser.classify_hardness() if parser.valid else None
-    return _hardness_cache[gold_sql]
+    return auto_hardness(gold_sql)
 
 
 def _evaluated_run(sample: Mapping) -> dict:
-    stages = [{**stage, "state": "done", "error": None} for stage in stages_from_evaluation(sample)]
+    recorded = list(((sample.get("workflow") or {}).get("stages") or {}).values())
+    stages = []
+    for stage, source in zip(stages_from_evaluation(sample), recorded):
+        errors = [str(error) for error in (source.get("runtime") or {}).get("errors") or []]
+        error = source.get("error") or (errors[0] if errors else None)
+        stages.append({**stage, "state": "failed" if error else "done", "error": error})
     ex = sample.get("ex")
     return {
         "state": "done", "stages": stages, "pred_sql": sample.get("pred_sql") or "",

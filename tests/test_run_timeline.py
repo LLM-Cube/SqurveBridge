@@ -369,6 +369,24 @@ class TimelineApiTests(unittest.TestCase):
         self.assertEqual(body["evaluation"], "collection_failed")
         self.assertIs(body["questions"][0]["run"]["ex"], True)
 
+    def test_hosted_correction_still_withholds_unpublished_benchmark_content(self):
+        import os
+        from unittest.mock import patch
+
+        self.bundle(json.dumps({"per_sample": [evaluated_sample()]}))
+        self.api._jobs["job1"].update(status="completed", dataset="bird")
+        self.api._job_owners["job1"] = "visitor"
+        with patch.dict(os.environ, {"SQURVE_DEPLOYMENT_TARGET": "hf-space"}):
+            client = self.api.app.test_client()
+            client.set_cookie("squrve_session", "visitor")
+            body = client.get("/api/evaluations/job1/timeline").json
+        self.assertTrue(body["corrected"])
+        first = body["questions"][0]
+        self.assertIsNone(first["question"])
+        self.assertEqual(first["run"]["pred_sql"], "")
+        self.assertEqual({stage["text"] for stage in first["run"]["stages"]}, {""})
+        self.assertNotIn("FROM singer", json.dumps(body))
+
     def test_polling_does_not_run_the_same_sql_again(self):
         self.client.get("/api/evaluations/job1/timeline")
         self.client.get("/api/evaluations/job1/timeline")
@@ -485,6 +503,13 @@ class CorrectionTests(unittest.TestCase):
         self.assertIs(item["run"]["ex"], False)
         self.assertEqual(item["run"]["verdict_source"], "evaluation")
         self.assertEqual(item["run"]["result"], preview)
+
+    def test_an_evaluated_stage_that_recorded_an_error_is_failed_not_done(self):
+        sample = evaluated_sample()
+        sample["workflow"]["stages"]["c3sql_parse"]["runtime"]["errors"] = ["RateLimitError: slow down"]
+        stages = self.build(evaluation=[sample])["questions"][0]["run"]["stages"]
+        self.assertEqual([stage["state"] for stage in stages], ["done", "failed", "done"])
+        self.assertEqual(stages[1]["error"], "RateLimitError: slow down")
 
     def test_a_corrected_timeline_repeats_every_question_so_a_client_replaces_what_it_saw(self):
         both = [evaluated_sample(), evaluated_sample(instance_id="dev_1", db_id="pets_1")]

@@ -37,6 +37,7 @@ export default {
   'run.liveNote': '实时运行：阶段输出来自运行日志，对错由只读执行预测与标准 SQL 得出，单元结束后用评测产物校正；Token 在单元结束后提供。',
   'run.liveNoteCorrected': '已用评测产物校正：阶段、对错与难度来自评测；单题 Token 为实测总量，按各阶段的模型调用占比拆分。',
   'run.batchDetails': '批处理日志与任务详情',
+  'run.liveResults': '实验结果',
   'run.liveScore': '累计得分',
   'run.live.cancelled': '已取消，已完成的题目保留在上方。',
   'run.live.failed': '运行失败，已完成的题目保留在上方，可从检查点恢复。',

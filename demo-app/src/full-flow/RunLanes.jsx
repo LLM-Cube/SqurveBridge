@@ -49,6 +49,19 @@ function Verdict({ verdict, t }) {
   )
 }
 
+/** One method's progress row in the Config jobs list; the same row for a recording and a live run. */
+export function JobRow({ id, label, finished, status, done, total, stage, children }) {
+  return (
+    <li data-method={id} className={finished ? 'done' : 'live'}>
+      <b>{label}</b>
+      <span className="showcase-chip">{status}</span>
+      <div className="showcase-track"><div style={{ width: `${total ? (100 * done) / total : 0}%` }} /></div>
+      <small>{done}/{total}{stage ? ` · ${stage}` : ''}</small>
+      {children}
+    </li>
+  )
+}
+
 /** One question and every method's lane for it; the same view for a recording and a live run. */
 export default function QuestionLanes({ t, info, lanes }) {
   return (

@@ -32,6 +32,7 @@ if str(_project_root) not in sys.path:
 from demo import model_catalog
 from demo import comparison_snapshots
 from demo.run_evidence import run_evidence
+from core.evidence import Availability
 from demo.run_timeline import build_run_timeline, cap_text, make_judge, withhold_content
 from demo.experiments import MAX_CELLS, ExperimentConflict, ExperimentNotFound, ExperimentScheduler
 from demo.variants import VariantError, normalize_stages, runner_overrides, swappable_actors, variant_key, variant_label
@@ -2538,17 +2539,17 @@ def _job_evaluation(job: dict) -> tuple[list[dict] | None, str]:
     an earlier attempt. An unreadable bundle keeps the live timeline instead of failing it.
     """
     if job.get("status") != "completed":
-        return None, "not_provided"
+        return None, Availability.NOT_PROVIDED
     path = _run_dir / str(job.get("job_id")) / "score-bundle" / "scores.json"
     if not path.is_file():
-        return None, "not_provided"
+        return None, Availability.NOT_PROVIDED
     try:
         samples = json.loads(path.read_text(encoding="utf-8")).get("per_sample")
     except (OSError, ValueError, AttributeError):
-        return None, "collection_failed"
+        return None, Availability.COLLECTION_FAILED
     if not isinstance(samples, list):
-        return None, "collection_failed"
-    return [sample for sample in samples if isinstance(sample, dict)], "observed"
+        return None, Availability.COLLECTION_FAILED
+    return [sample for sample in samples if isinstance(sample, dict)], Availability.PRESENT
 
 
 def _job_timeline(job: dict, since: int) -> dict:
