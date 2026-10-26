@@ -3,8 +3,8 @@ import ShowcaseMetrics from './ShowcaseMetrics.jsx'
 import ShowcaseRunGate from './ShowcaseRunGate.jsx'
 import record from './showcaseRecord.js'
 
-// The question-by-question replay embeds benchmark questions and SQL, which are not published;
-// it is a local-only asset, so the page works whether or not that file exists.
+// The question-by-question replay is loaded lazily and optionally, so the page still works
+// (results only, behind the run gate) if that file is ever absent.
 const replayModules = (() => {
   try { return import.meta.glob('./ShowcaseReplay.jsx') } catch { return {} }
 })()

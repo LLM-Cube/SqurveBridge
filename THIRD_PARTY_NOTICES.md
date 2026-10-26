@@ -14,6 +14,12 @@ The original Squrve copyright line remains in `LICENSE`. Spider, BIRD, and every
 other benchmark remain governed by their upstream distribution terms; see
 [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
+The showcase replay (`demo-app/src/full-flow/showcaseFixture.js`) embeds 50
+questions and gold SQL from the Spider dev set (Yu et al., EMNLP 2018,
+https://github.com/taoyds/spider), distributed under CC BY-SA 4.0. They are
+reproduced here with attribution and remain under that license; the model
+predictions and timings next to them come from SqurveBridge runs.
+
 The embedded Pi Agent runtime is consumed as the npm package
 [`@earendil-works/pi-coding-agent`](https://github.com/earendil-works/pi),
 pinned to an exact version in `demo/package.json` and installed into
