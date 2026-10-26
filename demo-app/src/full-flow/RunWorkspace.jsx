@@ -6,6 +6,7 @@ import {
   resolveFocusedConfig,
   withConnectionKeys,
 } from './model.js'
+import LiveRun from './LiveRun.jsx'
 import { experimentCells, variantLabel } from './variantModel.js'
 import { planPayload, planSummary } from './experimentPlan.js'
 
@@ -765,6 +766,9 @@ export default function RunWorkspace({
             })}
           </ul>}
       </div>
+      {liveEvaluation && experiment?.experiment_id && api
+        ? <LiveRun key={experiment.experiment_id} t={t} api={api} experimentId={experiment.experiment_id} onFinished={() => onViewComparison?.(experiment.experiment_id)} />
+        : null}
       <div className="run-progress-card">
         <div className="run-progress-heading">
           <div><strong>{progress.percent}%</strong><span>{progress.currentStage}</span></div>

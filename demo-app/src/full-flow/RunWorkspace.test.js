@@ -162,6 +162,36 @@ test('a late session response cannot replace an adopted experiment', async () =>
   assert.doesNotMatch(screen.getByTestId('run-batch-monitor').textContent, /unrelated/)
 })
 
+test('an adopted experiment shows the live question view fed by its timeline', async () => {
+  const requested = []
+  const api = async path => {
+    requested.push(path)
+    if (path === '/api/session') return { jobs: [] }
+    if (path === '/api/experiments/exp-live') {
+      return { experiment_id: 'exp-live', status: 'running', cells: [{ cell_id: 'c1', method: 'dinsql', dataset: 'spider', status: 'running', job_id: 'job-live' }] }
+    }
+    if (path.startsWith('/api/experiments/exp-live/timeline')) {
+      return {
+        experiment_id: 'exp-live', status: 'running', cursor: 0,
+        cells: [{
+          cell_id: 'c1', method: 'dinsql', dataset: 'spider', status: 'running', total: 1, cursor: 0,
+          questions: [{ index: 0, id: 'dev_0', db: 'pets_1', question: 'Which pets are oldest?', gold_sql: 'SELECT 1',
+            run: { state: 'running', stages: [{ name: 'dinsql_generate1', kind: 'sql', text: '', seconds: null, state: 'running', error: null }], pred_sql: '', ex: null, result: null } }],
+        }],
+      }
+    }
+    return {}
+  }
+  const { rerender } = renderRun({ api })
+  rerender(React.createElement(RunWorkspace, {
+    selectedConnections: [{ method: 'DINSQL', database: 'Spider' }], configs: [baseConfig], databases: [],
+    api, adoptExperimentId: 'exp-live', liveEvaluation: true, t,
+  }))
+  await waitFor(() => screen.getByText('Which pets are oldest?'))
+  assert.ok(requested.some(path => path.startsWith('/api/experiments/exp-live/timeline')))
+  cleanup()
+})
+
 test('successful cell resumes remain visible when a later resume is refused', async () => {
   const snapshot = {
     experiment_id: 'exp-partial', status: 'partial',
