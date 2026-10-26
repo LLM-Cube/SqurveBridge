@@ -3,6 +3,8 @@ set -euo pipefail
 
 export SQURVE_DEPLOYMENT_TARGET=hf-space
 export SQURVE_WORKSPACE_DIR="${SQURVE_WORKSPACE_DIR:-/app/workspace}"
+export SQURVE_HOSTED_EXPERIMENTS=on
+export SQURVE_EXPERIMENT_CONCURRENCY=1
 
 mkdir -p "${SQURVE_WORKSPACE_DIR}"
 

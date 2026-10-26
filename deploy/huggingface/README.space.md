@@ -11,16 +11,11 @@ license: mit
 
 # SqurveBridge Live Demo
 
-This Space runs the same Demo App shipped in the SqurveBridge repository: an interactive Text-to-SQL workspace with an embedded open-source Pi Agent backend, built on the upstream Squrve framework.
+This Space runs the same Demo App shipped in the SqurveBridge repository: an interactive Text-to-SQL workspace built on the upstream Squrve framework.
 
-The hosted environment keeps live LLM-backed SQL generation, read-only execution, Pi chat, and project Skills. Pi is restricted to read-only tools in the public Space; full coding tools remain local-only.
+The hosted environment keeps live LLM-backed SQL generation, read-only execution, and experimental evaluation runs. Design and run small Text-to-SQL experiments with up to 20 questions per cell using your own LLM credentials.
 
-The Space has no shared model credential. Use **Configure LLM** for the SQL
-workflow and **Login to Pi** for Agent chat; the two credentials and provider
-selections are independent. SQL credentials remain in server memory for the
-browser session for at most 30 idle minutes. Pi credentials live only inside one
-Pi child process and disappear when that chat session ends. A refresh or Space
-restart may require re-entry. Never use production credentials in a public demo.
+The Space has no shared model credential. Use **Configure LLM** to set your SQL provider; this same credential is used for both interactive queries and experiment runs. Session credentials remain in server memory for at most 30 idle minutes. A refresh or Space restart may require re-entry. Never use production credentials in a public demo.
 
 Runtime data is written under `SQURVE_WORKSPACE_DIR` (default `/app/workspace`).
 Without attached persistent storage, that directory is ephemeral and is cleared

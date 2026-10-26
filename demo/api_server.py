@@ -116,6 +116,7 @@ _sql_credentials = SessionCredentialRegistry(max_sessions=128, idle_timeout=1800
 _session_cookie_name = "squrve_session"
 _sample_limits = {3, 10, 20, 50, 100, 200}
 _supported_providers = frozenset(model_catalog.PROVIDER_ORDER)
+_hosted_session_credentials = threading.local()  # Thread-local storage for passing session credentials to job creation
 
 
 def _provider_model_ids() -> dict[str, list[str]]:
@@ -1882,6 +1883,19 @@ def _job_environment(job: dict) -> dict[str, str]:
     child_env.pop(STAGE_ACTORS_ENV, None)
     if job.get("stage_overrides"):
         child_env[STAGE_ACTORS_ENV] = json.dumps(job["stage_overrides"])
+    
+    # For hosted experiments with session credentials, inject the credential into the environment
+    if job.get("hosted_credential"):
+        cred = job["hosted_credential"]
+        child_env["SQURVE_LLM_PROVIDER"] = cred["provider"]
+        child_env["SQURVE_LLM_MODEL"] = cred["model"]
+        env_var = PROVIDER_ENV_VARS.get(cred["provider"])
+        if env_var:
+            child_env[env_var] = cred["api_key"]
+        if cred.get("base_url"):
+            # Store base_url for providers that support it
+            child_env["SQURVE_LLM_BASE_URL"] = cred["base_url"]
+    
     return child_env
 
 
@@ -2162,6 +2176,17 @@ def _launch_evaluation(
         "resume_count": 0,
         "max_resume_attempts": _max_resume_attempts,
     }
+    
+    # For hosted experiments with session credentials, store credential info in the job
+    if hasattr(_hosted_session_credentials, "store"):
+        credential = _hosted_session_credentials.store.get(threading.get_ident())
+        if credential is not None:
+            job["hosted_credential"] = {
+                "provider": credential.provider,
+                "model": credential.model,
+                "api_key": credential.api_key,
+                "base_url": credential.base_url,
+            }
     with _jobs_lock:
         _jobs[job_id] = job
         _persist_job(job)
@@ -2305,8 +2330,14 @@ def evaluation_detail(job_id: str):
     return jsonify(_public_job(job))
 
 
-def _evaluation_llm_preflight(dataset: str, method: str) -> None:
-    """Raise ValueError when the active provider cannot launch this config."""
+def _evaluation_llm_preflight(dataset: str, method: str, credential=None) -> None:
+    """Raise ValueError when the active provider cannot launch this config.
+    
+    Args:
+        dataset: The benchmark dataset name
+        method: The method name
+        credential: Optional SqlCredential for hosted mode (uses session key instead of .env)
+    """
     load_dotenv(_project_root / ".env")
     config_path = _project_root / "reproduce" / "configs" / dataset / f"{method}.json"
     if not config_path.is_file():
@@ -2318,6 +2349,21 @@ def _evaluation_llm_preflight(dataset: str, method: str) -> None:
     from reproduce.lib.env_config import prepare_runtime_llm_config
 
     resolved = prepare_runtime_llm_config(config)
+    
+    # For hosted mode with session credential, check if the session provider matches
+    if credential is not None:
+        provider = (resolved.get("llm") or {}).get("use")
+        if not provider:
+            raise ValueError("llm.use is missing")
+        if credential.provider != provider:
+            raise ValueError(
+                f"Session credential is for {credential.provider}, but config requires {provider}. "
+                f"Configure {provider} in your session to run this evaluation."
+            )
+        # Credential is valid; the job will use it from environment variables set at runtime
+        return
+    
+    # For local mode, check .env keys as before
     ready, message = api_key_ready(resolved)
     if not ready:
         raise ValueError(message or "LLM provider is not ready for evaluation.")
@@ -2480,11 +2526,11 @@ def _experiment_sampling(payload: dict):
     return {"limit": limit, "mode": mode, "seed": seed}
 
 
-def _cell_preflight(method: str, dataset: str, catalog: set[tuple[str, str]]) -> str | None:
+def _cell_preflight(method: str, dataset: str, catalog: set[tuple[str, str]], credential=None) -> str | None:
     if (dataset, method) not in catalog:
         return "config_missing"
     try:
-        _evaluation_llm_preflight(dataset, method)
+        _evaluation_llm_preflight(dataset, method, credential)
     except ValueError:
         return "credential_missing"
     return None
@@ -2492,10 +2538,28 @@ def _cell_preflight(method: str, dataset: str, catalog: set[tuple[str, str]]) ->
 
 @app.post("/api/experiments")
 def create_experiment():
+    from demo.deployment import hosted_experiments_enabled
+    
     payload = request.get_json(silent=True) or {}
     raw_cells = payload.get("cells")
     if not isinstance(raw_cells, list) or not raw_cells:
         return _json_error("Select at least one method × benchmark cell.")
+    
+    # Hosted mode credential check and safeguards
+    hosted = deployment_target() == "hf-space"
+    credential = None
+    if hosted:
+        if not hosted_experiments_enabled():
+            return _json_error("Experiments are not enabled in this hosted deployment.")
+        session_id, _ = _browser_session(create=False)
+        credential = _sql_credentials.get(session_id or "")
+        if credential is None:
+            return jsonify({
+                "status": "error",
+                "code": "auth_required",
+                "message": "Configure a SQL API provider for this browser session to run experiments.",
+            }), 401
+    
     configs = _config_catalog()
     actors_by_type = swappable_actors(configs)
     cells: list[tuple[str, str, dict[str, str]]] = []
@@ -2524,18 +2588,37 @@ def create_experiment():
     sampling = _experiment_sampling(payload)
     if sampling is None:
         return _json_error("Sampling needs limit 3, 10, 20, 50, 100, or 200, mode slice or random, and an integer seed.")
+    
+    # Hosted mode safeguards: limit question count
+    if hosted and sampling["limit"] > 20:
+        return _json_error("Hosted experiments are limited to 20 questions per cell. Use limit 3, 10, or 20.")
+    
     catalog = {(item["dataset"], item["method"]) for item in configs}
     rejected = [
         {"method": method, "dataset": dataset, "error_code": code}
         for method, dataset in dict.fromkeys((method, dataset) for method, dataset, _stages in cells)
-        if (code := _cell_preflight(method, dataset, catalog))
+        if (code := _cell_preflight(method, dataset, catalog, credential))
     ]
     if rejected:
         summary = ", ".join(f"{item['method']}/{item['dataset']} ({item['error_code']})" for item in rejected)
         return jsonify({"status": "error", "message": f"Some cells cannot run yet: {summary}.", "cells": rejected}), 400
-    experiment = _experiments.create(cells, sampling)
-    _start_experiment_ticker()
-    return jsonify(experiment), 202
+    
+    # Store credential in thread-local for job creation
+    if hosted and credential:
+        import threading
+        if not hasattr(_hosted_session_credentials, "store"):
+            _hosted_session_credentials.store = {}
+        _hosted_session_credentials.store[threading.get_ident()] = credential
+        try:
+            experiment = _experiments.create(cells, sampling)
+            _start_experiment_ticker()
+            return jsonify(experiment), 202
+        finally:
+            _hosted_session_credentials.store.pop(threading.get_ident(), None)
+    else:
+        experiment = _experiments.create(cells, sampling)
+        _start_experiment_ticker()
+        return jsonify(experiment), 202
 
 
 @app.get("/api/experiments")

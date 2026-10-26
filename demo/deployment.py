@@ -7,18 +7,19 @@ from collections.abc import Mapping
 DEPLOYMENT_TARGET_ENV = "SQURVE_DEPLOYMENT_TARGET"
 # Independent of the target: the Demo defaults to a showcase without the Agent.
 AGENT_ENV = "SQURVE_DEMO_AGENT"
+# Opt-in for hosted experiments using session credentials (disabled by default for safety).
+HOSTED_EXPERIMENTS_ENV = "SQURVE_HOSTED_EXPERIMENTS"
 _AGENT_OFF_VALUES = frozenset({"off", "0", "false", "no"})
+_ON_VALUES = frozenset({"on", "1", "true", "yes"})
 _AGENT_ROUTE_PREFIX = "/api/agent"
 _HOSTED_FORBIDDEN = (
     ("POST", "/api/provider"),
     ("POST", "/api/databases/upload"),
-    ("POST", "/api/evaluations"),
     ("POST", "/api/comparisons"),
     ("POST", "/api/comparison-snapshots"),
 )
 _HOSTED_FORBIDDEN_PREFIXES = (
     "/api/evaluations/",
-    "/api/experiments",
 )
 
 
@@ -37,8 +38,15 @@ def agent_enabled(environment: Mapping[str, str] | None = None) -> bool:
     return str(values.get(AGENT_ENV, "off")).strip().lower() not in _AGENT_OFF_VALUES
 
 
+def hosted_experiments_enabled(environment: Mapping[str, str] | None = None) -> bool:
+    """Check if hosted experiments are explicitly enabled (opt-in for safety)."""
+    values = os.environ if environment is None else environment
+    return str(values.get(HOSTED_EXPERIMENTS_ENV, "off")).strip().lower() in _ON_VALUES
+
+
 def deployment_features(environment: Mapping[str, str] | None = None) -> dict[str, bool]:
     hosted = is_hf_space(environment)
+    experiments_opt_in = hosted_experiments_enabled(environment)
     return {
         "live_sql": True,
         "sql_execution": True,
@@ -47,7 +55,7 @@ def deployment_features(environment: Mapping[str, str] | None = None) -> dict[st
         "session_sql_auth": hosted,
         "database_upload": not hosted,
         "agent_chat": agent_enabled(environment),
-        "live_evaluation": not hosted,
+        "live_evaluation": (not hosted) or experiments_opt_in,
     }
 
 
@@ -59,6 +67,15 @@ def hosted_route_allowed(
     if not is_hf_space(environment):
         return True
     normalized = (method.upper(), path.rstrip("/") or "/")
+    
+    # Check if experiments/evaluations routes are requested
+    is_experiment_route = path.startswith("/api/experiments")
+    is_evaluation_post = normalized == ("POST", "/api/evaluations")
+    
+    # Allow experiments and evaluations only when explicitly opted in
+    if is_experiment_route or is_evaluation_post:
+        return hosted_experiments_enabled(environment)
+    
     if normalized in _HOSTED_FORBIDDEN:
         return False
     if path.startswith("/api/archive/") and "/files/" in path:
