@@ -352,3 +352,24 @@ class TimelineApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ContractTests(unittest.TestCase):
+    """The recorded replay and a live run must keep the same shape (see tests/fixtures/run_timeline_contract.json)."""
+
+    def test_live_timeline_has_every_field_the_replay_renderer_reads(self):
+        from pathlib import Path
+
+        from demo.run_timeline import build_run_timeline
+
+        contract = json.loads((Path(__file__).parent / "fixtures" / "run_timeline_contract.json").read_text())
+        text = log(trace("dev_0", "gen", "pred_sql", "SELECT 1", 0.5), "样本 dev_0 处理完成 (0.5s)")
+        item = build_run_timeline(QUESTIONS, text, method="c3sql")["questions"][0]
+        for key in contract["question"]:
+            self.assertIn(key, item)
+        for key in contract["run"]:
+            self.assertIn(key, item["run"])
+        for stage in item["run"]["stages"]:
+            for key in contract["stage"]:
+                self.assertIn(key, stage)
+            self.assertIn(stage["kind"], contract["stage_kinds"])
