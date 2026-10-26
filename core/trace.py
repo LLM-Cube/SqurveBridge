@@ -46,6 +46,7 @@ def record_actor_trace(
     before_row = before_row or {}
     after_row = snapshot_row(dataset, item)
     record = {
+        "instance_id": row.get("instance_id"),
         "actor_name": getattr(actor, "name", None) or getattr(actor, "NAME", None) or actor.__class__.__name__,
         "actor_class": actor.__class__.__name__,
         "stage_name": stage_name,
