@@ -276,11 +276,39 @@ class ExperimentControlTests(ExperimentApiTestCase):
         response = self.client.post(f"/api/experiments/{experiment_id}/cancel")
         self.assertEqual(response.json["status"], "partial")
 
-    def test_hosted_space_cannot_run_experiments(self):
+    def test_hosted_space_cannot_run_experiments_without_opt_in(self):
         with patch.dict(os.environ, {"SQURVE_DEPLOYMENT_TARGET": "hf-space"}, clear=False):
             response = self.create([{"method": "c3sql", "dataset": "spider"}])
         self.assertEqual(response.status_code, 403)
         self.assertEqual(self.backend.launched, [])
+
+    def test_hosted_space_with_opt_in_requires_session_credential(self):
+        env = {"SQURVE_DEPLOYMENT_TARGET": "hf-space", "SQURVE_HOSTED_EXPERIMENTS": "on"}
+        with patch.dict(os.environ, env, clear=False):
+            response = self.create([{"method": "c3sql", "dataset": "spider"}])
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json["code"], "auth_required")
+        self.assertIn("Configure a SQL API provider", response.json["message"])
+        self.assertEqual(self.backend.launched, [])
+
+    def test_hosted_space_limits_question_count(self):
+        from demo.sql_credential import SqlCredential
+        from unittest.mock import MagicMock
+        
+        env = {"SQURVE_DEPLOYMENT_TARGET": "hf-space", "SQURVE_HOSTED_EXPERIMENTS": "on", **READY_ENV}
+        credential = SqlCredential(provider="deepseek", model="deepseek-flash", api_key="test-key")
+        
+        with patch.dict(os.environ, env, clear=False), \
+             patch.object(self.api_server, "_browser_session", return_value=("test-session", False)), \
+             patch.object(self.api_server._sql_credentials, "get", return_value=credential):
+            # 20 questions is allowed
+            response = self.create([{"method": "c3sql", "dataset": "spider"}], {"limit": 20, "mode": "slice", "seed": 42})
+            self.assertEqual(response.status_code, 202)
+            
+            # 50 questions is rejected
+            response = self.create([{"method": "dinsql", "dataset": "spider"}], {"limit": 50, "mode": "slice", "seed": 42})
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("limited to 20 questions", response.json["message"])
 
 
 if __name__ == "__main__":

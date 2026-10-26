@@ -3,6 +3,7 @@ import unittest
 from demo.deployment import (
     deployment_features,
     deployment_target,
+    hosted_experiments_enabled,
     hosted_route_allowed,
     is_hf_space,
 )
@@ -49,6 +50,37 @@ class DemoDeploymentTests(unittest.TestCase):
         self.assertFalse(hosted_route_allowed("POST", "/api/evaluations", env))
         self.assertFalse(hosted_route_allowed("POST", "/api/comparisons", env))
         self.assertTrue(hosted_route_allowed("GET", "/api/terminals", env))
+
+    def test_hosted_experiments_disabled_by_default(self):
+        env = {"SQURVE_DEPLOYMENT_TARGET": "hf-space"}
+        self.assertFalse(hosted_experiments_enabled(env))
+        self.assertFalse(deployment_features(env)["live_evaluation"])
+        self.assertFalse(hosted_route_allowed("POST", "/api/experiments", env))
+        self.assertFalse(hosted_route_allowed("GET", "/api/experiments/abc123", env))
+
+    def test_hosted_experiments_opt_in(self):
+        env = {"SQURVE_DEPLOYMENT_TARGET": "hf-space", "SQURVE_HOSTED_EXPERIMENTS": "on"}
+        self.assertTrue(hosted_experiments_enabled(env))
+        self.assertTrue(deployment_features(env)["live_evaluation"])
+        self.assertTrue(hosted_route_allowed("POST", "/api/experiments", env))
+        self.assertTrue(hosted_route_allowed("GET", "/api/experiments/abc123", env))
+        self.assertTrue(hosted_route_allowed("POST", "/api/evaluations", env))
+        # Other dangerous routes still blocked
+        self.assertFalse(hosted_route_allowed("POST", "/api/provider", env))
+        self.assertFalse(hosted_route_allowed("POST", "/api/databases/upload", env))
+        self.assertFalse(hosted_route_allowed("POST", "/api/comparisons", env))
+
+    def test_hosted_experiments_various_on_values(self):
+        for value in ["on", "1", "true", "yes", "ON", "True", "YES"]:
+            with self.subTest(value=value):
+                env = {"SQURVE_DEPLOYMENT_TARGET": "hf-space", "SQURVE_HOSTED_EXPERIMENTS": value}
+                self.assertTrue(hosted_experiments_enabled(env), f"Failed for value: {value}")
+
+    def test_local_mode_always_allows_experiments(self):
+        # Local mode doesn't need the opt-in
+        env = {"SQURVE_DEPLOYMENT_TARGET": "local"}
+        self.assertTrue(deployment_features(env)["live_evaluation"])
+        self.assertTrue(hosted_route_allowed("POST", "/api/experiments", env))
 
 
 if __name__ == "__main__":
