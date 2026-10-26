@@ -67,12 +67,17 @@ def hosted_route_allowed(
     if not is_hf_space(environment):
         return True
     normalized = (method.upper(), path.rstrip("/") or "/")
+    
+    # Check if experiments/evaluations routes are requested
+    is_experiment_route = path.startswith("/api/experiments")
+    is_evaluation_post = normalized == ("POST", "/api/evaluations")
+    
+    # Allow experiments and evaluations only when explicitly opted in
+    if is_experiment_route or is_evaluation_post:
+        return hosted_experiments_enabled(environment)
+    
     if normalized in _HOSTED_FORBIDDEN:
         return False
-    # Allow experiments and evaluations when explicitly opted in
-    if hosted_experiments_enabled(environment):
-        if path.startswith("/api/experiments") or normalized == ("POST", "/api/evaluations"):
-            return True
     if path.startswith("/api/archive/") and "/files/" in path:
         return False
     return not any(path.startswith(prefix) for prefix in _HOSTED_FORBIDDEN_PREFIXES)
