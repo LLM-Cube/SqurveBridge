@@ -311,15 +311,16 @@ def _browser_session(*, create: bool) -> tuple[str | None, bool]:
     return new_session_id(), True
 
 
+def _session_cookie_attributes() -> dict:
+    """The Space is shown inside an iframe on huggingface.co, a cross-site context where
+    a Lax cookie is never sent back; a partitioned SameSite=None cookie is."""
+    if deployment_target() == "hf-space":
+        return {"secure": True, "httponly": True, "samesite": "None", "partitioned": True}
+    return {"secure": False, "httponly": True, "samesite": "Lax"}
+
+
 def _set_session_cookie(response, session_id: str) -> None:
-    response.set_cookie(
-        _session_cookie_name,
-        session_id,
-        max_age=1800,
-        secure=deployment_target() == "hf-space",
-        httponly=True,
-        samesite="Lax",
-    )
+    response.set_cookie(_session_cookie_name, session_id, max_age=1800, **_session_cookie_attributes())
 
 
 def _same_origin_error():
@@ -900,12 +901,7 @@ def delete_sql_auth():
         "configured": False,
         "providers": _sql_provider_catalog(),
     })
-    response.delete_cookie(
-        _session_cookie_name,
-        secure=deployment_target() == "hf-space",
-        httponly=True,
-        samesite="Lax",
-    )
+    response.delete_cookie(_session_cookie_name, **_session_cookie_attributes())
     return response
 
 
