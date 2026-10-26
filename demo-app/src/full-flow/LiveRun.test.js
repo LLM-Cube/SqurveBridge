@@ -119,3 +119,50 @@ test('reopening a run that already finished does not switch the view', async () 
   await waitFor(() => screen.getByText('Question 0?'))
   assert.deepEqual(finished, [])
 })
+
+test('a live question shows its hardness, the stage each method is on, and where the numbers come from', async () => {
+  cleanup()
+  const running = { ...idle, state: 'running', stages: [stage('reduce', 'done', 'C3SQLReducer · observed · 2 items'), stage('parse', 'running')] }
+  const { api } = fakeApi([snapshot('running', [{ ...item(0, running), hardness: 'hard' }, item(1, idle)])])
+  render(React.createElement(LiveRun, { t, api, experimentId: 'exp1', pollMs: 1000 }))
+  await waitFor(() => screen.getByText('hard'))
+  const row = screen.getByRole('list', { name: 'Running score' }).querySelector('li[data-method="c3sql"]')
+  assert.match(row.textContent, /· parse/)
+  assert.match(screen.getByRole('note').textContent, /run log/)
+})
+
+test('a corrected cell says so and replaces what was shown before', async () => {
+  cleanup()
+  const live = { state: 'done', stages: [stage('generate', 'done', 'SELECT 9')], pred_sql: 'SELECT 9', ex: true, result: null }
+  const fixed = { state: 'done', stages: [{ ...stage('c3sql_generate', 'done', 'SELECT 1'), tokens: 120 }], pred_sql: 'SELECT 1', ex: false, result: null, verdict_source: 'evaluation' }
+  const corrected = snapshot('completed', [item(0, fixed), item(1, fixed)], { cursor: 2 })
+  corrected.cells[0].corrected = true
+  const { api } = fakeApi([snapshot('running', [item(0, live), item(1, idle)], { cursor: 1 }), corrected])
+  render(React.createElement(LiveRun, { t, api, experimentId: 'exp1', pollMs: 5 }))
+  await waitFor(() => assert.match(screen.getByRole('note').textContent, /^Corrected from the score bundle/))
+  assert.equal(screen.queryByText('SELECT 9'), null)
+  assert.match(screen.getByRole('list', { name: 'Running score' }).textContent, /EX 0\/2 · 240 tok/)
+})
+
+test('a stage that finishes while watching is typed out, then shown in full', async () => {
+  cleanup()
+  const text = 'C3SQLReducer · observed · a fairly long line of stage output'
+  const { api } = fakeApi([
+    snapshot('running', [item(0, { ...idle, state: 'running', stages: [stage('reduce', 'running')] })]),
+    snapshot('running', [item(0, { ...idle, state: 'running', stages: [stage('reduce', 'done', text), stage('parse', 'running')] })]),
+  ])
+  render(React.createElement(LiveRun, { t, api, experimentId: 'exp1', pollMs: 20, typeMs: 300 }))
+  const output = () => document.querySelector('.showcase-stage.done .showcase-out')?.textContent ?? ''
+  await waitFor(() => assert.ok(output().length > 0 && output().length < text.length))
+  await waitFor(() => assert.equal(output(), text))
+})
+
+test('an active cell can be cancelled from its progress row', async () => {
+  cleanup()
+  const { api } = fakeApi([snapshot('running', [item(0, { ...idle, state: 'running', stages: [stage('reduce', 'running')] })])])
+  const cancelled = []
+  render(React.createElement(LiveRun, { t, api, experimentId: 'exp1', pollMs: 1000, onCancelCell: id => cancelled.push(id) }))
+  const { fireEvent } = await import('@testing-library/react')
+  fireEvent.click(await screen.findByRole('button', { name: 'Cancel c3sql on spider' }))
+  assert.deepEqual(cancelled, ['c1'])
+})

@@ -44,7 +44,7 @@ function Verdict({ verdict, t }) {
     <div className={`showcase-verdict ${verdict.ex ? 'ok' : 'bad'}`}>
       <b>{verdict.ex ? `✓ ${t('showcase.hit')}` : `✗ ${t('showcase.miss')}`}</b>
       <pre>{verdict.pred_sql}</pre>
-      <div>{describeResult(verdict.result, t)}</div>
+      {verdict.result ? <div>{describeResult(verdict.result, t)}</div> : null}
     </div>
   )
 }
