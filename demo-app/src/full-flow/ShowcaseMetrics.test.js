@@ -27,11 +27,40 @@ const cell = (name, row, method) => {
 
 test.after(() => { cleanup(); unregister(); closeDom() })
 
+// All four recorded runs are valid, so the way an invalid run is shown is exercised on a record derived from the
+// real one in which three runs failed the validity rule (with the diagnostics such runs report).
+const FAILED = { dinsql: { bad: 11, errors: 71, exhausted: 0 }, finsql: { bad: 19, errors: 90, exhausted: 42 }, unisar: { bad: 26, errors: 88, exhausted: 26 } }
+function flagged() {
+  const data = structuredClone(record)
+  const batch = data.batches[0]
+  for (const [id, facts] of Object.entries(FAILED)) {
+    Object.assign(batch.runs[id].diagnostics, {
+      degenerate_predictions: facts.bad, degenerate_rate: facts.bad / batch.sample_count,
+      connection_errors: facts.errors, retries_exhausted: facts.exhausted, valid: false,
+    })
+  }
+  batch.ranking = ['c3sql']
+  batch.invalid_runs = Object.keys(FAILED)
+  batch.pairwise = []
+  return data
+}
+
 test('opens on the latest batch and shows every method with its validity', () => {
   mount()
   assert.deepEqual(record.batches.map(batch => batch.sample_count), [50], 'the record holds only the 50-question slice')
   assert.equal(screen.queryAllByRole('button', { name: /-question batch/ }).length, 0, 'one batch needs no switcher')
-  assert.match(screen.getByLabelText('Run validity').textContent, /50 questions/)
+  const validity = screen.getByLabelText('Run validity')
+  assert.match(validity.textContent, /50 questions/)
+  for (const method of ['c3sql', 'dinsql', 'finsql', 'unisar']) {
+    const item = validity.querySelector(`[data-method="${method}"]`)
+    assert.ok(item.className.includes('valid') && !item.className.includes('invalid'), `${method} is valid`)
+  }
+  assert.match(validity.textContent, /Ranking \(valid runs only\): dinsql > c3sql > finsql > unisar$/, 'by EX, best first')
+  assert.doesNotMatch(validity.textContent, /Left out of ranking and comparisons/)
+})
+
+test('a run that failed the rule is marked invalid and left out of the ranking', () => {
+  mount(flagged())
   const validity = screen.getByLabelText('Run validity')
   const item = method => validity.querySelector(`[data-method="${method}"]`)
   assert.ok(item('c3sql').className.includes('valid') && !item('c3sql').className.includes('invalid'))
@@ -42,13 +71,14 @@ test('opens on the latest batch and shows every method with its validity', () =>
 
 test('the page proves the methods answered the same questions and says why a run failed', () => {
   mount()
-  const validity = screen.getByLabelText('Run validity')
-  assert.match(validity.textContent, /every method answered the same 50 questions \(fingerprint [0-9a-f]{12}\)/)
-  assert.match(validity.querySelector('[data-method="unisar"]').textContent, /26 of 50 questions produced no SQL \(52%\) · 88 connection errors · 26 retries exhausted/)
+  assert.match(screen.getByLabelText('Run validity').textContent, /every method answered the same 50 questions \(fingerprint [0-9a-f]{12}\)/)
+  cleanup()
+  mount(flagged())
+  assert.match(screen.getByLabelText('Run validity').querySelector('[data-method="unisar"]').textContent, /26 of 50 questions produced no SQL \(52%\) · 88 connection errors · 26 retries exhausted/)
 })
 
 test('the validity rule says in plain words what invalid means and why', () => {
-  mount()
+  mount(flagged())
   const validity = screen.getByLabelText('Run validity')
   const rule = validity.querySelector('p').textContent
   assert.match(rule, /model calls fail/)
@@ -61,7 +91,7 @@ test('the validity rule says in plain words what invalid means and why', () => {
 })
 
 test('an invalid tile explains itself on hover, a valid one does not need to', () => {
-  mount()
+  mount(flagged())
   const tile = method => within(screen.getByRole('list', { name: 'Method summary' })).getAllByRole('listitem').find(item => item.dataset.method === method)
   assert.match(tile('finsql').querySelector('.kpi-name em').getAttribute('title'), /38% of the questions produced no SQL/)
   assert.equal(tile('c3sql').querySelector('.kpi-name em').getAttribute('title'), null)
@@ -111,10 +141,19 @@ test('the question matrix is anonymous and has one row per question of the batch
 })
 
 test('with a single valid run there is nothing to compare pairwise', () => {
-  mount()
+  mount(flagged())
   openLevel('l6')
   assert.ok(screen.getByText(/Fewer than two valid runs/))
   assert.equal(screen.queryByRole('table', { name: /Pairwise comparison/ }), null)
+})
+
+test('with four valid runs every pair is compared, as bars and in a table', () => {
+  mount()
+  openLevel('l6')
+  const pairs = [...chart('Pairwise comparison (valid runs only) chart').querySelectorAll('[data-pair]')].map(pair => pair.dataset.pair)
+  assert.deepEqual(pairs, ['c3sql-dinsql', 'c3sql-finsql', 'c3sql-unisar', 'dinsql-finsql', 'dinsql-unisar', 'finsql-unisar'])
+  assert.equal(within(table('Pairwise comparison table')).getAllByRole('row').length, 1 + 6)
+  assert.equal(screen.queryByText(/Fewer than two valid runs/), null)
 })
 
 const openLevel = id => fireEvent.click(screen.getByRole('tab', { name: new RegExp(`^${id.toUpperCase()} `) }))
@@ -193,17 +232,19 @@ test('quality bars are scaled to their value and carry the confidence interval',
   const c3 = bars.find(bar => bar.dataset.method === 'c3sql')
   const dinsql = bars.find(bar => bar.dataset.method === 'dinsql')
   assert.equal(c3.dataset.value, '0.76')
+  assert.equal(dinsql.dataset.value, '0.82')
   const height = bar => Number(/V([\d.]+)Q/.exec(bar.querySelector('path').getAttribute('d'))[1])
   const bottom = bar => Number(/M[\d.]+,([\d.]+)V/.exec(bar.querySelector('path').getAttribute('d'))[1])
   const px = bar => bottom(bar) - (height(bar) - 4)
-  assert.ok(px(c3) > px(dinsql), 'a higher EX draws a taller bar')
-  assert.ok(Math.abs(px(c3) / px(dinsql) - 0.76 / 0.66) < 0.02, 'bar height is proportional to the value')
+  assert.ok(px(dinsql) > px(c3), 'a higher EX draws a taller bar')
+  assert.ok(Math.abs(px(dinsql) / px(c3) - 0.82 / 0.76) < 0.02, 'bar height is proportional to the value')
   assert.equal(c3.querySelectorAll('line').length, 3, 'a whisker with two caps for the interval')
   assert.equal(dinsql.querySelectorAll('line').length, 3)
+  assert.ok(bars.every(bar => bar.dataset.valid === 'true' && bar.querySelector('path').getAttribute('fill').startsWith('var(--series-')), 'valid runs are solid')
 })
 
 test('invalid runs are hatched everywhere, valid runs are solid', () => {
-  mount()
+  mount(flagged())
   const bars = marks('Answer quality chart', '[data-metric="ex"]')
   assert.equal(bars.find(bar => bar.dataset.method === 'c3sql').querySelector('path').getAttribute('fill'), 'var(--series-1)')
   for (const method of ['dinsql', 'finsql', 'unisar']) {
@@ -220,10 +261,11 @@ test('invalid runs are hatched everywhere, valid runs are solid', () => {
 test('a method keeps its colour in every chart', () => {
   mount()
   openLevel('l2')
-  const colour = (name, selector, method) => marks(name, `${selector}[data-method="${method}"]`)[0]
-  assert.equal(colour('Cost vs quality chart', 'g', 'unisar').querySelector('circle').getAttribute('stroke'), 'var(--series-7)')
-  assert.equal(colour('Latency avg (s) chart', 'g', 'unisar').querySelector('line').getAttribute('stroke'), 'var(--series-7)')
-  assert.equal(colour('Cost vs quality chart', 'g', 'c3sql').querySelector('circle').getAttribute('fill'), 'var(--series-1)')
+  const colour = (name, method) => marks(name, `g[data-method="${method}"]`)[0]
+  for (const [method, slot] of [['c3sql', 1], ['dinsql', 2], ['finsql', 3], ['unisar', 7]]) {
+    assert.equal(colour('Cost vs quality chart', method).querySelector('circle').getAttribute('fill'), `var(--series-${slot})`, `${method} in the scatter`)
+    assert.equal(colour('Latency avg (s) chart', method).querySelector('line').getAttribute('stroke'), `var(--series-${slot})`, `${method} in the latency chart`)
+  }
 })
 
 test('the cost chart places methods by tokens (x) and EX (y) on one axis each', () => {
@@ -234,16 +276,16 @@ test('the cost chart places methods by tokens (x) and EX (y) on one axis each', 
     return { x: Number(circle.getAttribute('cx')), y: Number(circle.getAttribute('cy')) }
   }
   const [c3, din, fin, uni] = ['c3sql', 'dinsql', 'finsql', 'unisar'].map(point)
-  assert.ok(uni.x < fin.x && fin.x < c3.x && c3.x < din.x, 'fewer tokens sit further left')
-  assert.ok(c3.y < din.y && din.y < fin.y && fin.y < uni.y, 'higher EX sits higher (smaller y)')
+  assert.ok(uni.x < c3.x && c3.x < fin.x && fin.x < din.x, 'fewer tokens sit further left (22k, 61k, 71k, 413k)')
+  assert.ok(din.y < c3.y && c3.y < fin.y && fin.y < uni.y, 'higher EX sits higher (smaller y): 0.82, 0.76, 0.74, 0.14')
 })
 
 test('hovering a mark shows its value and an invalid run says so', () => {
-  mount()
+  mount(flagged())
   const dinsql = marks('Answer quality chart', '[data-metric="ex"]').find(bar => bar.dataset.method === 'dinsql')
   fireEvent.mouseEnter(dinsql, { clientX: 10, clientY: 10 })
   const tip = screen.getByRole('tooltip')
-  assert.match(tip.textContent, /dinsql · EX 0\.660/)
+  assert.match(tip.textContent, /dinsql · EX 0\.820/)
   assert.match(tip.textContent, /invalid run/)
   fireEvent.mouseLeave(dinsql)
   assert.equal(screen.queryByRole('tooltip'), null)
@@ -271,10 +313,14 @@ test('each method gets its own error panel on a shared scale', () => {
   mount()
   openLevel('l4')
   const panels = [...chart('Error roots (count · share) chart').querySelectorAll('.showcase-panel-mini')]
-  assert.deepEqual(panels.map(panel => panel.dataset.method), ['c3sql', 'dinsql', 'finsql', 'unisar'])
-  const longest = panel => Math.max(...[...panel.querySelectorAll('[data-error]')].map(bar => Number(bar.dataset.value)))
-  assert.equal(longest(panels[0]), 7)
-  assert.equal(longest(panels[3]), 45)
+  const methods = ['c3sql', 'dinsql', 'finsql', 'unisar']
+  assert.deepEqual(panels.map(panel => panel.dataset.method), methods)
+  const longest = panel => Math.max(0, ...[...panel.querySelectorAll('[data-error]')].map(bar => Number(bar.dataset.value)))
+  methods.forEach((method, i) => {
+    const recorded = Math.max(0, ...Object.values(record.batches[0].runs[method].error_roots).map(row => row.count))
+    assert.equal(longest(panels[i]), recorded, `${method}: the longest bar is its biggest error count`)
+  })
+  assert.ok(longest(panels[3]) > longest(panels[0]), 'unisar has by far the biggest single error count')
 })
 
 test('summary tiles show each method headline and mark the invalid ones', () => {
@@ -282,8 +328,13 @@ test('summary tiles show each method headline and mark the invalid ones', () => 
   const tiles = within(screen.getByRole('list', { name: 'Method summary' })).getAllByRole('listitem')
   assert.deepEqual(tiles.map(tile => tile.dataset.method), ['c3sql', 'dinsql', 'finsql', 'unisar'])
   assert.match(tiles[0].textContent, /0\.76.*EX · 38\/50/)
-  assert.deepEqual(tiles.map(tile => tile.dataset.valid), ['true', 'false', 'false', 'false'])
-  assert.ok(tiles[1].className.includes('invalid'))
+  assert.match(tiles[1].textContent, /0\.82.*EX · 41\/50/)
+  assert.deepEqual(tiles.map(tile => tile.dataset.valid), ['true', 'true', 'true', 'true'])
+  cleanup()
+  mount(flagged())
+  const marked = within(screen.getByRole('list', { name: 'Method summary' })).getAllByRole('listitem')
+  assert.deepEqual(marked.map(tile => tile.dataset.valid), ['true', 'false', 'false', 'false'])
+  assert.ok(marked[1].className.includes('invalid'))
 })
 
 test('structure delta: biggest strays first, zero-gap features folded into a note', () => {
@@ -291,13 +342,23 @@ test('structure delta: biggest strays first, zero-gap features folded into a not
   openLevel('l3')
   const name = 'SQL structure delta (mean ± std) chart'
   const rows = [...new Set(marks(name, '[data-row]').map(row => row.dataset.row))]
-  assert.deepEqual(rows.slice(0, 2), ['predicate', 'query_fields'], 'unisar strays furthest on predicates (-0.96), then query fields (-0.94)')
-  assert.equal(rows.length, 8, 'only the eight biggest gaps are drawn')
-  assert.ok(!rows.includes('window') && !rows.includes('math_compute'), 'features with no gap are not drawn')
-  assert.match(screen.getByText(/smaller gaps not drawn/).textContent, /set_operation|like/)
-  assert.match(screen.getByText(/more show no difference/).textContent, /window/)
-  const dot = method => Number(marks(name, `[data-row="predicate"] [data-method="${method}"] circle`)[0].getAttribute('cx'))
-  assert.ok(dot('unisar') < dot('finsql') && dot('finsql') < dot('c3sql') && dot('c3sql') < dot('dinsql'), 'negative gaps sit left of the zero line, positive right')
+  // expected order from the record itself: how far each feature strays, largest first, zero-gap features dropped
+  const runs = Object.values(record.batches[0].runs)
+  const strays = Object.fromEntries(Object.keys(runs[0].structure_delta).map(key => [key, Math.max(...runs.map(run => Math.abs(run.structure_delta[key].mean)))]))
+  const expected = Object.entries(strays).filter(([, gap]) => gap >= 0.005).sort((a, b) => b[1] - a[1]).map(([key]) => key)
+  assert.deepEqual(rows, expected.slice(0, 8), 'the eight biggest gaps, biggest first')
+  assert.equal(rows.length, 8)
+  const flat = Object.entries(strays).filter(([, gap]) => gap < 0.005).map(([key]) => key)
+  assert.ok(flat.length > 0 && rows.every(row => !flat.includes(row)), 'features with no gap are not drawn')
+  assert.match(screen.getByText(/more show no difference/).textContent, new RegExp(flat[0]))
+  // every dot sits on the side of the zero line that its sign says
+  const zero = Number([...chart(name).querySelectorAll('line')].find(line => line.getAttribute('stroke-width') === '1.4').getAttribute('x1'))
+  for (const dot of marks(name, '[data-mean]')) {
+    const x = Number(dot.querySelector('circle').getAttribute('cx'))
+    const mean = Number(dot.dataset.mean)
+    if (mean > 0.01) assert.ok(x > zero, `${dot.dataset.method} +${mean}`)
+    if (mean < -0.01) assert.ok(x < zero, `${dot.dataset.method} ${mean}`)
+  }
 })
 
 test('stage metrics are drawn per method, only for stages that were computed', () => {
@@ -317,9 +378,12 @@ test('outcomes add up to every question and the unobserved process metrics are n
   openLevel('l4')
   const parts = method => Object.fromEntries(marks('Outcomes chart', `g[data-method="${method}"] [data-outcome]`).map(part => [part.dataset.outcome, Number(part.dataset.value)]))
   assert.deepEqual(parts('c3sql'), { correct: 0.76, wrong: 0.22, error: 0.02 })
-  const unisar = parts('unisar')
-  assert.ok(unisar.error > 0.85, 'most UniSAR questions ended in an execution error')
-  assert.ok(Math.abs(Object.values(unisar).reduce((a, b) => a + b, 0) - 1) < 1e-9)
+  for (const [method, run] of Object.entries(record.batches[0].runs)) {
+    const shown = parts(method)
+    assert.ok(Math.abs(Object.values(shown).reduce((a, b) => a + b, 0) - 1) < 1e-9, `${method} adds up to every question`)
+    assert.ok(Math.abs(shown.correct - run.process.correct_ratio.value) < 1e-9, `${method} correct share equals its recorded ratio`)
+  }
+  assert.ok(parts('unisar').error > 0.7, 'most UniSAR questions ended in an execution error (the SQL has no FROM clause)')
   openLevel('l5')
   assert.match(screen.getByTestId('unobserved').textContent, /not a score of 0.*refinement_fix_rate/)
   assert.ok(chart('Generation quality chart'))

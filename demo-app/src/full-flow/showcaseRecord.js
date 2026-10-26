@@ -483,7 +483,7 @@ export default {
       "recorded_on": "2026-10-25",
       "dataset": "spider",
       "split": "dev",
-      "wall_seconds": 327.0
+      "wall_seconds": 69.8
      },
      "sampling": {
       "limit": 50,
@@ -494,35 +494,35 @@ export default {
      "quality": {
       "ex": {
        "status": "ok",
-       "value": 0.66,
-       "numerator": 33,
+       "value": 0.82,
+       "numerator": 41,
        "denominator": 50,
        "total": 50,
        "coverage": 1.0,
        "interval": [
-        0.521538,
-        0.775631
+        0.692039,
+        0.902298
        ]
       },
       "em": {
        "status": "ok",
-       "value": 0.46153846153846156,
+       "value": 0.42,
        "numerator": null,
-       "denominator": 39,
+       "denominator": 50,
        "total": 50,
-       "coverage": 0.78,
+       "coverage": 1.0,
        "interval": [
-        0.315669,
-        0.614306
+        0.29375,
+        0.557666
        ]
       },
       "sf1": {
        "status": "ok",
-       "value": 0.9871794871794872,
+       "value": 0.99,
        "numerator": null,
-       "denominator": 39,
+       "denominator": 50,
        "total": 50,
-       "coverage": 0.78
+       "coverage": 1.0
       },
       "sc": {
        "status": "unavailable",
@@ -531,81 +531,77 @@ export default {
       },
       "ves": {
        "status": "ok",
-       "value": 0.9577999161738504,
+       "value": 0.9593312335396046,
        "numerator": null,
-       "denominator": 39,
+       "denominator": 50,
        "total": 50,
-       "coverage": 0.78
+       "coverage": 1.0
       },
       "rves": {
        "status": "ok",
-       "value": 0.9363592896978528,
+       "value": 0.9276863657649076,
        "numerator": null,
-       "denominator": 39,
+       "denominator": 50,
        "total": 50,
-       "coverage": 0.78
+       "coverage": 1.0
       }
      },
      "cost": {
-      "total_calls": 158,
-      "prompt_tokens": 298960,
-      "completion_tokens": 26676,
-      "total_tokens": 325636,
-      "avg_tokens_per_sample": 6512.72,
+      "total_calls": 200,
+      "prompt_tokens": 378511,
+      "completion_tokens": 34506,
+      "total_tokens": 413017,
+      "avg_tokens_per_sample": 8260.34,
       "latency": {
-       "avg_s": 17.723615384615385,
-       "p50_s": 9.948,
-       "p95_s": 23.966300000000004
+       "avg_s": 8.904139999999998,
+       "p50_s": 8.761,
+       "p95_s": 13.101949999999995
       },
       "tokens_per_sample": {
-       "samples": 40,
-       "min": 5315,
-       "median": 8134.0,
-       "max": 10680
+       "samples": 50,
+       "min": 6608,
+       "median": 8237.5,
+       "max": 10411
       }
      },
      "component_f1": {
-      "select": 0.7905982905982907,
-      "where": 0.8595848595848596,
-      "group": 0.8974358974358975,
-      "order": 0.9230769230769231,
-      "join": 0.982905982905983,
-      "iuen": 0.8717948717948718,
-      "keywords": 0.8803418803418804
+      "select": 0.8266666666666667,
+      "where": 0.7933333333333333,
+      "group": 0.9133333333333334,
+      "order": 0.8733333333333334,
+      "join": 0.9733333333333333,
+      "iuen": 0.82,
+      "keywords": 0.8933333333333333
      },
      "error_roots": {
-      "execution_error": {
-       "count": 11,
-       "pct": 0.6470588235294118
-      },
       "model_missing_columns": {
-       "count": 4,
-       "pct": 0.23529411764705882
+       "count": 5,
+       "pct": 0.5555555555555556
       },
       "model_missing_join": {
-       "count": 1,
-       "pct": 0.058823529411764705
+       "count": 2,
+       "pct": 0.2222222222222222
       },
       "model_wrong_keywords": {
-       "count": 1,
-       "pct": 0.058823529411764705
+       "count": 2,
+       "pct": 0.2222222222222222
       }
      },
      "by_hardness": {
       "easy": {
        "count": 29,
-       "ex": 0.6896551724137931,
-       "em": 0.45454545454545453
+       "ex": 0.896551724137931,
+       "em": 0.4482758620689655
       },
       "medium": {
        "count": 7,
        "ex": 0.7142857142857143,
-       "em": 0.8333333333333334
+       "em": 0.7142857142857143
       },
       "hard": {
        "count": 14,
-       "ex": 0.5714285714285714,
-       "em": 0.2727272727272727
+       "ex": 0.7142857142857143,
+       "em": 0.21428571428571427
       },
       "extra": {
        "count": 0,
@@ -616,73 +612,73 @@ export default {
      "by_db_type": {
       "sqlite": {
        "count": 50,
-       "ex": 0.66,
-       "em": 0.46153846153846156
+       "ex": 0.82,
+       "em": 0.42
       }
      },
      "by_sql_feature": {
       "join>0": {
        "count": 14,
        "ex": 0.42857142857142855,
-       "em": 0.2727272727272727,
+       "em": 0.14285714285714285,
        "sf1": 1.0,
-       "ves": 0.9232380248032974
+       "ves": 0.8856230444451333
       },
       "subquery>0": {
        "count": 6,
        "ex": 1.0,
        "em": 0.6666666666666666,
        "sf1": 1.0,
-       "ves": 1.006730676136981
+       "ves": 0.9855916528765784
       },
       "set_operation>0": {
        "count": 5,
-       "ex": 0.4,
-       "em": 0.3333333333333333,
+       "ex": 0.6,
+       "em": 0.4,
        "sf1": 1.0,
-       "ves": 1.006313003327141
+       "ves": 0.9699877954414113
       },
       "aggregation>0": {
        "count": 27,
-       "ex": 0.6666666666666666,
-       "em": 0.36363636363636365,
-       "sf1": 0.9772727272727273,
-       "ves": 0.9644159649681264
+       "ex": 0.8148148148148148,
+       "em": 0.3333333333333333,
+       "sf1": 0.9814814814814815,
+       "ves": 0.9899553460554747
       },
       "group_by>0": {
        "count": 13,
-       "ex": 0.6153846153846154,
-       "em": 0.2727272727272727,
+       "ex": 0.6923076923076923,
+       "em": 0.15384615384615385,
        "sf1": 1.0,
-       "ves": 1.0028925929150783
+       "ves": 1.0618991616754163
       },
       "order_by>0": {
        "count": 14,
-       "ex": 0.7142857142857143,
-       "em": 0.6,
+       "ex": 1.0,
+       "em": 0.35714285714285715,
        "sf1": 1.0,
-       "ves": 1.0290028116279322
+       "ves": 1.0336973704517354
       },
       "predicate>2": {
        "count": 4,
-       "ex": 0.25,
-       "em": 0.0,
+       "ex": 0.5,
+       "em": 0.25,
        "sf1": 1.0,
-       "ves": 0.49550435820370275
+       "ves": 0.47508698384741704
       },
       "like>0": {
        "count": 2,
        "ex": 1.0,
-       "em": 0.0,
+       "em": 0.5,
        "sf1": 1.0,
-       "ves": 0.8718242041071458
+       "ves": 0.9665687044443928
       },
       "distinct>0": {
        "count": 2,
        "ex": 1.0,
        "em": 1.0,
        "sf1": 1.0,
-       "ves": 1.0007799478729666
+       "ves": 1.1111989072495736
       },
       "window>0": {
        "count": 0,
@@ -703,16 +699,16 @@ export default {
       "join_and_group": {
        "count": 8,
        "ex": 0.5,
-       "em": 0.2857142857142857,
+       "em": 0.125,
        "sf1": 1.0,
-       "ves": 1.019525608979264
+       "ves": 1.069312624889669
       },
       "nested_or_set": {
        "count": 11,
-       "ex": 0.7272727272727273,
-       "em": 0.5555555555555556,
+       "ex": 0.8181818181818182,
+       "em": 0.5454545454545454,
        "sf1": 1.0,
-       "ves": 1.0065914518670342
+       "ves": 0.9784989904060478
       },
       "complex_predicate": {
        "count": 0,
@@ -724,48 +720,48 @@ export default {
      },
      "structure_delta": {
       "aggregation": {
-       "mean": 0.10256410256410256,
-       "std": 0.30338870682562136
+       "mean": 0.14,
+       "std": 0.34698703145794946
       },
       "control_flow": {
        "mean": 0.0,
        "std": 0.0
       },
       "distinct": {
-       "mean": 0.10256410256410256,
-       "std": 0.30338870682562136
+       "mean": 0.08,
+       "std": 0.2712931993250107
       },
       "group_by": {
-       "mean": 0.0,
-       "std": 0.0
+       "mean": 0.02,
+       "std": 0.14
       },
       "join": {
-       "mean": -0.05128205128205128,
-       "std": 0.388865407387259
+       "mean": 0.0,
+       "std": 0.282842712474619
       },
       "like": {
        "mean": 0.0,
        "std": 0.0
       },
       "limit": {
-       "mean": -0.07692307692307693,
-       "std": 0.2664693550105965
+       "mean": -0.1,
+       "std": 0.3
       },
       "logical_connector": {
-       "mean": 0.1282051282051282,
-       "std": 0.5153782369805585
+       "mean": 0.02,
+       "std": 0.14
       },
       "math_compute": {
        "mean": 0.0,
        "std": 0.0
       },
       "order_by": {
-       "mean": -0.07692307692307693,
-       "std": 0.2664693550105965
+       "mean": -0.1,
+       "std": 0.3
       },
       "predicate": {
-       "mean": 0.20512820512820512,
-       "std": 0.6476579969392353
+       "mean": 0.18,
+       "std": 0.5546169849544819
       },
       "query_fields": {
        "mean": 0.0,
@@ -776,12 +772,12 @@ export default {
        "std": 0.0
       },
       "set_operation": {
-       "mean": -0.05128205128205128,
-       "std": 0.22057244274468274
+       "mean": -0.06,
+       "std": 0.23748684174075835
       },
       "subquery": {
-       "mean": 0.07692307692307693,
-       "std": 0.2664693550105965
+       "mean": 0.12,
+       "std": 0.32496153618543844
       },
       "window": {
        "mean": 0.0,
@@ -792,15 +788,15 @@ export default {
      "process": {
       "correct_ratio": {
        "status": "ok",
-       "value": 0.66
+       "value": 0.82
       },
       "incorrect_ratio": {
        "status": "ok",
-       "value": 0.12
+       "value": 0.18
       },
       "error_ratio": {
        "status": "ok",
-       "value": 0.22
+       "value": 0.0
       },
       "outcome_observed": {
        "status": "ok",
@@ -827,11 +823,11 @@ export default {
       },
       "generation_pass1": {
        "status": "ok",
-       "value": 0.8461538461538461
+       "value": 0.82
       },
       "generation_oracle_k": {
        "status": "ok",
-       "value": 0.8461538461538461
+       "value": 0.82
       },
       "generation_exec_validity": {
        "status": "ok",
@@ -888,17 +884,17 @@ export default {
       }
      },
      "bottlenecks": {
-      "success": 33,
-      "dinsql_generate": 17
+      "success": 41,
+      "dinsql_generate": 9
      },
      "diagnostics": {
-      "connection_errors": 71,
+      "connection_errors": 0,
       "retries_exhausted": 0,
       "fallbacks_to_empty": 0,
-      "model_calls": 158,
-      "degenerate_predictions": 11,
-      "degenerate_rate": 0.22,
-      "valid": false
+      "model_calls": 200,
+      "degenerate_predictions": 0,
+      "degenerate_rate": 0.0,
+      "valid": true
      }
     },
     "finsql": {
@@ -911,7 +907,7 @@ export default {
       "recorded_on": "2026-10-25",
       "dataset": "spider",
       "split": "dev",
-      "wall_seconds": 241.7
+      "wall_seconds": 44.9
      },
      "sampling": {
       "limit": 50,
@@ -922,31 +918,31 @@ export default {
      "quality": {
       "ex": {
        "status": "ok",
-       "value": 0.4,
-       "numerator": 20,
+       "value": 0.74,
+       "numerator": 37,
        "denominator": 50,
        "total": 50,
        "coverage": 1.0,
        "interval": [
-        0.276084,
-        0.538186
+        0.604468,
+        0.841285
        ]
       },
       "em": {
        "status": "ok",
-       "value": 0.08,
+       "value": 0.2,
        "numerator": null,
        "denominator": 50,
        "total": 50,
        "coverage": 1.0,
        "interval": [
-        0.03155,
-        0.188382
+        0.112438,
+        0.330371
        ]
       },
       "sf1": {
        "status": "ok",
-       "value": 0.36466666666666664,
+       "value": 0.6327777777777777,
        "numerator": null,
        "denominator": 50,
        "total": 50,
@@ -959,7 +955,7 @@ export default {
       },
       "ves": {
        "status": "ok",
-       "value": 0.31898882164825076,
+       "value": 0.5182660941893661,
        "numerator": null,
        "denominator": 50,
        "total": 50,
@@ -967,7 +963,7 @@ export default {
       },
       "rves": {
        "status": "ok",
-       "value": 0.31358937354716154,
+       "value": 0.5131977294243392,
        "numerator": null,
        "denominator": 50,
        "total": 50,
@@ -975,65 +971,65 @@ export default {
       }
      },
      "cost": {
-      "total_calls": 58,
-      "prompt_tokens": 29930,
-      "completion_tokens": 10577,
-      "total_tokens": 40507,
-      "avg_tokens_per_sample": 810.14,
+      "total_calls": 100,
+      "prompt_tokens": 52350,
+      "completion_tokens": 18373,
+      "total_tokens": 70723,
+      "avg_tokens_per_sample": 1414.46,
       "latency": {
-       "avg_s": 15.898480000000001,
-       "p50_s": 14.134,
-       "p95_s": 24.4672
+       "avg_s": 4.48808,
+       "p50_s": 4.1655,
+       "p95_s": 6.230849999999999
       },
       "tokens_per_sample": {
-       "samples": 32,
-       "min": 685,
-       "median": 1317.0,
-       "max": 2001
+       "samples": 50,
+       "min": 1037,
+       "median": 1410.0,
+       "max": 1794
       }
      },
      "component_f1": {
-      "select": 0.24333333333333332,
-      "where": 0.56,
-      "group": 0.8433333333333334,
-      "order": 0.83,
-      "join": 0.5966666666666667,
-      "iuen": 0.8333333333333333,
-      "keywords": 0.88
+      "select": 0.36666666666666664,
+      "where": 0.7700000000000001,
+      "group": 0.9366666666666665,
+      "order": 0.94,
+      "join": 0.9733333333333334,
+      "iuen": 0.8933333333333333,
+      "keywords": 0.94
      },
      "error_roots": {
-      "execution_error": {
-       "count": 20,
-       "pct": 0.6666666666666666
-      },
       "model_missing_columns": {
-       "count": 6,
-       "pct": 0.2
-      },
-      "model_missing_predicates": {
-       "count": 3,
-       "pct": 0.1
+       "count": 7,
+       "pct": 0.5384615384615384
       },
       "model_missing_join": {
+       "count": 3,
+       "pct": 0.23076923076923078
+      },
+      "model_missing_predicates": {
        "count": 1,
-       "pct": 0.03333333333333333
+       "pct": 0.07692307692307693
+      },
+      "execution_error": {
+       "count": 2,
+       "pct": 0.15384615384615385
       }
      },
      "by_hardness": {
       "easy": {
        "count": 29,
-       "ex": 0.5172413793103449,
-       "em": 0.10344827586206896
+       "ex": 0.8275862068965517,
+       "em": 0.1724137931034483
       },
       "medium": {
        "count": 7,
-       "ex": 0.42857142857142855,
-       "em": 0.14285714285714285
+       "ex": 0.5714285714285714,
+       "em": 0.42857142857142855
       },
       "hard": {
        "count": 14,
-       "ex": 0.14285714285714285,
-       "em": 0.0
+       "ex": 0.6428571428571429,
+       "em": 0.14285714285714285
       },
       "extra": {
        "count": 0,
@@ -1044,52 +1040,52 @@ export default {
      "by_db_type": {
       "sqlite": {
        "count": 50,
-       "ex": 0.4,
-       "em": 0.08
+       "ex": 0.74,
+       "em": 0.2
       }
      },
      "by_sql_feature": {
       "join>0": {
        "count": 14,
-       "ex": 0.07142857142857142,
+       "ex": 0.35714285714285715,
        "em": 0.0,
-       "sf1": 0.18571428571428572,
-       "ves": 0.20602559416283245
+       "sf1": 0.45595238095238094,
+       "ves": 0.4335130967200805
       },
       "subquery>0": {
        "count": 6,
-       "ex": 0.5,
-       "em": 0.16666666666666666,
-       "sf1": 0.3333333333333333,
-       "ves": 0.3140982864839716
+       "ex": 1.0,
+       "em": 0.3333333333333333,
+       "sf1": 0.6666666666666666,
+       "ves": 0.662797600007372
       },
       "set_operation>0": {
        "count": 5,
-       "ex": 0.2,
-       "em": 0.0,
-       "sf1": 0.2,
-       "ves": 0.20022934368644757
+       "ex": 0.0,
+       "em": 0.2,
+       "sf1": 0.016666666666666666,
+       "ves": 0.0
       },
       "aggregation>0": {
        "count": 27,
-       "ex": 0.4074074074074074,
-       "em": 0.07407407407407407,
-       "sf1": 0.48518518518518516,
-       "ves": 0.47866728639968037
+       "ex": 0.8148148148148148,
+       "em": 0.25925925925925924,
+       "sf1": 0.8814814814814815,
+       "ves": 0.8498838929193311
       },
       "group_by>0": {
        "count": 13,
-       "ex": 0.3076923076923077,
-       "em": 0.0,
-       "sf1": 0.43076923076923074,
-       "ves": 0.45336917361441575
+       "ex": 0.7692307692307693,
+       "em": 0.15384615384615385,
+       "sf1": 0.8692307692307693,
+       "ves": 0.8649456409933335
       },
       "order_by>0": {
        "count": 14,
-       "ex": 0.35714285714285715,
-       "em": 0.0,
-       "sf1": 0.19206349206349205,
-       "ves": 0.06466893339612458
+       "ex": 0.8571428571428571,
+       "em": 0.14285714285714285,
+       "sf1": 0.5619047619047619,
+       "ves": 0.44087616944659713
       },
       "predicate>2": {
        "count": 4,
@@ -1100,9 +1096,9 @@ export default {
       },
       "like>0": {
        "count": 2,
-       "ex": 0.5,
+       "ex": 1.0,
        "em": 0.0,
-       "sf1": 0.22222222222222224,
+       "sf1": 0.4444444444444445,
        "ves": 0.0
       },
       "distinct>0": {
@@ -1110,7 +1106,7 @@ export default {
        "ex": 1.0,
        "em": 1.0,
        "sf1": 1.0,
-       "ves": 1.0121388155944637
+       "ves": 1.0003804312219204
       },
       "window>0": {
        "count": 0,
@@ -1130,17 +1126,17 @@ export default {
      "by_scenario": {
       "join_and_group": {
        "count": 8,
-       "ex": 0.125,
+       "ex": 0.625,
        "em": 0.0,
-       "sf1": 0.325,
-       "ves": 0.3605447897849568
+       "sf1": 0.7875,
+       "ves": 0.7586479192601409
       },
       "nested_or_set": {
        "count": 11,
-       "ex": 0.36363636363636365,
-       "em": 0.09090909090909091,
-       "sf1": 0.2727272727272727,
-       "ves": 0.2623396761214607
+       "ex": 0.5454545454545454,
+       "em": 0.2727272727272727,
+       "sf1": 0.37121212121212127,
+       "ves": 0.3615259636403847
       },
       "complex_predicate": {
        "count": 0,
@@ -1152,8 +1148,8 @@ export default {
      },
      "structure_delta": {
       "aggregation": {
-       "mean": -0.22,
-       "std": 0.7011419257183241
+       "mean": 0.06,
+       "std": 0.23748684174075835
       },
       "control_flow": {
        "mean": 0.0,
@@ -1164,40 +1160,40 @@ export default {
        "std": 0.14
       },
       "group_by": {
-       "mean": -0.1,
-       "std": 0.3
+       "mean": 0.0,
+       "std": 0.0
       },
       "join": {
-       "mean": -0.1,
-       "std": 0.41231056256176607
+       "mean": -0.04,
+       "std": 0.28
       },
       "like": {
-       "mean": -0.02,
-       "std": 0.14
+       "mean": 0.0,
+       "std": 0.0
       },
       "limit": {
-       "mean": -0.12,
-       "std": 0.32496153618543844
+       "mean": -0.04,
+       "std": 0.19595917942265426
       },
       "logical_connector": {
-       "mean": 0.04,
-       "std": 0.28
+       "mean": 0.02,
+       "std": 0.14
       },
       "math_compute": {
        "mean": 0.0,
        "std": 0.0
       },
       "order_by": {
-       "mean": -0.16,
-       "std": 0.3666060555964672
+       "mean": -0.04,
+       "std": 0.19595917942265426
       },
       "predicate": {
-       "mean": -0.24,
-       "std": 0.7631513611335565
+       "mean": 0.08,
+       "std": 0.33704599092705434
       },
       "query_fields": {
-       "mean": -0.84,
-       "std": 1.0268398122394748
+       "mean": -0.26,
+       "std": 0.5219195340279955
       },
       "scalar_function": {
        "mean": 0.0,
@@ -1208,7 +1204,7 @@ export default {
        "std": 0.23748684174075835
       },
       "subquery": {
-       "mean": -0.06,
+       "mean": 0.06,
        "std": 0.31048349392520047
       },
       "window": {
@@ -1235,7 +1231,7 @@ export default {
        "metrics": {
         "execute_accuracy": {
          "status": "ok",
-         "value": 0.375,
+         "value": 0.7916666666666666,
          "numerator": null,
          "denominator": 48,
          "total": 50,
@@ -1248,7 +1244,7 @@ export default {
        "metrics": {
         "execute_accuracy": {
          "status": "ok",
-         "value": 0.4166666666666667,
+         "value": 0.7708333333333334,
          "numerator": null,
          "denominator": 48,
          "total": 50,
@@ -1260,15 +1256,15 @@ export default {
      "process": {
       "correct_ratio": {
        "status": "ok",
-       "value": 0.4
+       "value": 0.74
       },
       "incorrect_ratio": {
        "status": "ok",
-       "value": 0.2
+       "value": 0.22
       },
       "error_ratio": {
        "status": "ok",
-       "value": 0.4
+       "value": 0.04
       },
       "outcome_observed": {
        "status": "ok",
@@ -1294,15 +1290,15 @@ export default {
       },
       "generation_pass1": {
        "status": "ok",
-       "value": 0.4
+       "value": 0.74
       },
       "generation_oracle_k": {
        "status": "ok",
-       "value": 0.4
+       "value": 0.74
       },
       "generation_exec_validity": {
        "status": "ok",
-       "value": 0.6
+       "value": 0.96
       },
       "generation_candidate_diversity": {
        "status": "unavailable",
@@ -1354,17 +1350,17 @@ export default {
       }
      },
      "bottlenecks": {
-      "success": 20,
-      "finsql_generate": 30
+      "success": 37,
+      "finsql_generate": 13
      },
      "diagnostics": {
-      "connection_errors": 90,
-      "retries_exhausted": 42,
-      "fallbacks_to_empty": 42,
-      "model_calls": 58,
-      "degenerate_predictions": 19,
-      "degenerate_rate": 0.38,
-      "valid": false
+      "connection_errors": 0,
+      "retries_exhausted": 0,
+      "fallbacks_to_empty": 0,
+      "model_calls": 100,
+      "degenerate_predictions": 0,
+      "degenerate_rate": 0.0,
+      "valid": true
      }
     },
     "unisar": {
@@ -1377,7 +1373,7 @@ export default {
       "recorded_on": "2026-10-25",
       "dataset": "spider",
       "split": "dev",
-      "wall_seconds": 206.7
+      "wall_seconds": 22.0
      },
      "sampling": {
       "limit": 50,
@@ -1388,31 +1384,31 @@ export default {
      "quality": {
       "ex": {
        "status": "ok",
-       "value": 0.04,
-       "numerator": 2,
+       "value": 0.14,
+       "numerator": 7,
        "denominator": 50,
        "total": 50,
        "coverage": 1.0,
        "interval": [
-        0.011039,
-        0.134601
+        0.069508,
+        0.261862
        ]
       },
       "em": {
        "status": "ok",
-       "value": 0.04,
+       "value": 0.1,
        "numerator": null,
        "denominator": 50,
        "total": 50,
        "coverage": 1.0,
        "interval": [
-        0.011039,
-        0.134601
+        0.043476,
+        0.213602
        ]
       },
       "sf1": {
        "status": "ok",
-       "value": 0.04,
+       "value": 0.14,
        "numerator": null,
        "denominator": 50,
        "total": 50,
@@ -1425,7 +1421,7 @@ export default {
       },
       "ves": {
        "status": "ok",
-       "value": 0.04043654276753864,
+       "value": 0.14063865679224674,
        "numerator": null,
        "denominator": 50,
        "total": 50,
@@ -1433,7 +1429,7 @@ export default {
       },
       "rves": {
        "status": "ok",
-       "value": 0.04,
+       "value": 0.136720468439143,
        "numerator": null,
        "denominator": 50,
        "total": 50,
@@ -1441,51 +1437,51 @@ export default {
       }
      },
      "cost": {
-      "total_calls": 24,
-      "prompt_tokens": 9808,
-      "completion_tokens": 1096,
-      "total_tokens": 10904,
-      "avg_tokens_per_sample": 218.08,
+      "total_calls": 50,
+      "prompt_tokens": 20906,
+      "completion_tokens": 1805,
+      "total_tokens": 22711,
+      "avg_tokens_per_sample": 454.22,
       "latency": {
-       "avg_s": 13.726919999999998,
-       "p50_s": 13.915,
-       "p95_s": 20.053399999999996
+       "avg_s": 1.17012,
+       "p50_s": 1.007,
+       "p95_s": 1.90895
       },
       "tokens_per_sample": {
-       "samples": 24,
+       "samples": 50,
        "min": 335,
-       "median": 473.0,
+       "median": 457.0,
        "max": 527
       }
      },
      "component_f1": {
-      "select": 0.3766666666666667,
-      "where": 0.38,
+      "select": 0.77,
+      "where": 0.4,
       "group": 0.74,
       "order": 0.72,
-      "join": 0.06,
+      "join": 0.18,
       "iuen": 0.78,
-      "keywords": 0.74
+      "keywords": 0.78
      },
      "error_roots": {
       "execution_error": {
-       "count": 45,
-       "pct": 0.9375
+       "count": 39,
+       "pct": 0.9069767441860465
       },
       "model_missing_columns": {
-       "count": 1,
-       "pct": 0.020833333333333332
+       "count": 2,
+       "pct": 0.046511627906976744
       },
       "model_missing_join": {
        "count": 2,
-       "pct": 0.041666666666666664
+       "pct": 0.046511627906976744
       }
      },
      "by_hardness": {
       "easy": {
        "count": 29,
-       "ex": 0.06896551724137931,
-       "em": 0.06896551724137931
+       "ex": 0.2413793103448276,
+       "em": 0.1724137931034483
       },
       "medium": {
        "count": 7,
@@ -1506,8 +1502,8 @@ export default {
      "by_db_type": {
       "sqlite": {
        "count": 50,
-       "ex": 0.04,
-       "em": 0.04
+       "ex": 0.14,
+       "em": 0.1
       }
      },
      "by_sql_feature": {
@@ -1534,10 +1530,10 @@ export default {
       },
       "aggregation>0": {
        "count": 27,
-       "ex": 0.07407407407407407,
-       "em": 0.07407407407407407,
-       "sf1": 0.07407407407407407,
-       "ves": 0.07488248660655304
+       "ex": 0.2222222222222222,
+       "em": 0.14814814814814814,
+       "sf1": 0.2222222222222222,
+       "ves": 0.224266757852714
       },
       "group_by>0": {
        "count": 13,
@@ -1569,10 +1565,10 @@ export default {
       },
       "distinct>0": {
        "count": 2,
-       "ex": 0.0,
-       "em": 0.0,
-       "sf1": 0.0,
-       "ves": 0.0
+       "ex": 0.5,
+       "em": 0.5,
+       "sf1": 0.5,
+       "ves": 0.48836518879452984
       },
       "window>0": {
        "count": 0,
@@ -1614,16 +1610,16 @@ export default {
      },
      "structure_delta": {
       "aggregation": {
-       "mean": -0.56,
-       "std": 0.7255342858886822
+       "mean": -0.4,
+       "std": 0.7211102550927979
       },
       "control_flow": {
        "mean": 0.0,
        "std": 0.0
       },
       "distinct": {
-       "mean": 0.06,
-       "std": 0.36932370625238775
+       "mean": 0.1,
+       "std": 0.3
       },
       "group_by": {
        "mean": -0.26,
@@ -1642,8 +1638,8 @@ export default {
        "std": 0.4270831300812524
       },
       "logical_connector": {
-       "mean": -0.04,
-       "std": 0.19595917942265426
+       "mean": 0.0,
+       "std": 0.0
       },
       "math_compute": {
        "mean": 0.0,
@@ -1654,12 +1650,12 @@ export default {
        "std": 0.44899888641287294
       },
       "predicate": {
-       "mean": -0.96,
-       "std": 1.0190191362285597
+       "mean": -0.86,
+       "std": 1.02
       },
       "query_fields": {
-       "mean": -0.94,
-       "std": 0.9881295461628501
+       "mean": -0.04,
+       "std": 0.28
       },
       "scalar_function": {
        "mean": 0.0,
@@ -1684,7 +1680,7 @@ export default {
        "metrics": {
         "execute_accuracy": {
          "status": "ok",
-         "value": 0.0,
+         "value": 0.041666666666666664,
          "numerator": null,
          "denominator": 48,
          "total": 50,
@@ -1697,7 +1693,7 @@ export default {
        "metrics": {
         "execute_accuracy": {
          "status": "ok",
-         "value": 0.041666666666666664,
+         "value": 0.14583333333333334,
          "numerator": null,
          "denominator": 48,
          "total": 50,
@@ -1709,15 +1705,15 @@ export default {
      "process": {
       "correct_ratio": {
        "status": "ok",
-       "value": 0.04
+       "value": 0.14
       },
       "incorrect_ratio": {
        "status": "ok",
-       "value": 0.06
+       "value": 0.08
       },
       "error_ratio": {
        "status": "ok",
-       "value": 0.9
+       "value": 0.78
       },
       "outcome_observed": {
        "status": "ok",
@@ -1743,15 +1739,15 @@ export default {
       },
       "generation_pass1": {
        "status": "ok",
-       "value": 0.04
+       "value": 0.14
       },
       "generation_oracle_k": {
        "status": "ok",
-       "value": 0.04
+       "value": 0.14
       },
       "generation_exec_validity": {
        "status": "ok",
-       "value": 0.1
+       "value": 0.22
       },
       "generation_candidate_diversity": {
        "status": "unavailable",
@@ -1803,29 +1799,77 @@ export default {
       }
      },
      "bottlenecks": {
-      "unisar_generate": 48,
-      "success": 2
+      "success": 7,
+      "unisar_generate": 43
      },
      "diagnostics": {
-      "connection_errors": 88,
-      "retries_exhausted": 26,
+      "connection_errors": 0,
+      "retries_exhausted": 0,
       "fallbacks_to_empty": 0,
-      "model_calls": 24,
-      "degenerate_predictions": 26,
-      "degenerate_rate": 0.52,
-      "valid": false
+      "model_calls": 50,
+      "degenerate_predictions": 0,
+      "degenerate_rate": 0.0,
+      "valid": true
      }
     }
    },
    "ranking": [
-    "c3sql"
-   ],
-   "invalid_runs": [
     "dinsql",
+    "c3sql",
     "finsql",
     "unisar"
    ],
-   "pairwise": [],
+   "invalid_runs": [],
+   "pairwise": [
+    {
+     "a": "c3sql",
+     "b": "dinsql",
+     "both": 37,
+     "only_a": 1,
+     "only_b": 4,
+     "neither": 8
+    },
+    {
+     "a": "c3sql",
+     "b": "finsql",
+     "both": 31,
+     "only_a": 7,
+     "only_b": 6,
+     "neither": 6
+    },
+    {
+     "a": "c3sql",
+     "b": "unisar",
+     "both": 7,
+     "only_a": 31,
+     "only_b": 0,
+     "neither": 12
+    },
+    {
+     "a": "dinsql",
+     "b": "finsql",
+     "both": 35,
+     "only_a": 6,
+     "only_b": 2,
+     "neither": 7
+    },
+    {
+     "a": "dinsql",
+     "b": "unisar",
+     "both": 7,
+     "only_a": 34,
+     "only_b": 0,
+     "neither": 9
+    },
+    {
+     "a": "finsql",
+     "b": "unisar",
+     "both": 6,
+     "only_a": 31,
+     "only_b": 1,
+     "neither": 12
+    }
+   ],
    "question_matrix": [
     {
      "q": "q1",
@@ -1834,7 +1878,7 @@ export default {
       "c3sql": 1,
       "dinsql": 1,
       "finsql": 1,
-      "unisar": 0
+      "unisar": 1
      }
     },
     {
@@ -1844,7 +1888,7 @@ export default {
       "c3sql": 1,
       "dinsql": 1,
       "finsql": 1,
-      "unisar": 0
+      "unisar": 1
      }
     },
     {
@@ -1852,8 +1896,8 @@ export default {
      "hardness": "easy",
      "ex": {
       "c3sql": 1,
-      "dinsql": 0,
-      "finsql": 0,
+      "dinsql": 1,
+      "finsql": 1,
       "unisar": 0
      }
     },
@@ -1863,7 +1907,7 @@ export default {
      "ex": {
       "c3sql": 1,
       "dinsql": 1,
-      "finsql": 0,
+      "finsql": 1,
       "unisar": 0
      }
     },
@@ -1873,7 +1917,7 @@ export default {
      "ex": {
       "c3sql": 1,
       "dinsql": 1,
-      "finsql": 0,
+      "finsql": 1,
       "unisar": 0
      }
     },
@@ -1883,7 +1927,7 @@ export default {
      "ex": {
       "c3sql": 1,
       "dinsql": 1,
-      "finsql": 0,
+      "finsql": 1,
       "unisar": 0
      }
     },
@@ -1892,7 +1936,7 @@ export default {
      "hardness": "easy",
      "ex": {
       "c3sql": 1,
-      "dinsql": 0,
+      "dinsql": 1,
       "finsql": 1,
       "unisar": 0
      }
@@ -1902,8 +1946,8 @@ export default {
      "hardness": "easy",
      "ex": {
       "c3sql": 1,
-      "dinsql": 0,
-      "finsql": 0,
+      "dinsql": 1,
+      "finsql": 1,
       "unisar": 0
      }
     },
@@ -1924,7 +1968,7 @@ export default {
       "c3sql": 1,
       "dinsql": 1,
       "finsql": 1,
-      "unisar": 0
+      "unisar": 1
      }
     },
     {
@@ -1953,7 +1997,7 @@ export default {
      "ex": {
       "c3sql": 1,
       "dinsql": 1,
-      "finsql": 0,
+      "finsql": 1,
       "unisar": 0
      }
     },
@@ -1973,7 +2017,7 @@ export default {
      "ex": {
       "c3sql": 1,
       "dinsql": 1,
-      "finsql": 0,
+      "finsql": 1,
       "unisar": 0
      }
     },
@@ -1983,7 +2027,7 @@ export default {
      "ex": {
       "c3sql": 1,
       "dinsql": 1,
-      "finsql": 0,
+      "finsql": 1,
       "unisar": 0
      }
     },
@@ -2002,7 +2046,7 @@ export default {
      "hardness": "easy",
      "ex": {
       "c3sql": 1,
-      "dinsql": 0,
+      "dinsql": 1,
       "finsql": 1,
       "unisar": 0
      }
@@ -2023,7 +2067,7 @@ export default {
      "ex": {
       "c3sql": 1,
       "dinsql": 1,
-      "finsql": 0,
+      "finsql": 1,
       "unisar": 0
      }
     },
@@ -2032,9 +2076,9 @@ export default {
      "hardness": "easy",
      "ex": {
       "c3sql": 1,
-      "dinsql": 0,
-      "finsql": 0,
-      "unisar": 0
+      "dinsql": 1,
+      "finsql": 1,
+      "unisar": 1
      }
     },
     {
@@ -2044,7 +2088,7 @@ export default {
       "c3sql": 1,
       "dinsql": 1,
       "finsql": 0,
-      "unisar": 0
+      "unisar": 1
      }
     },
     {
@@ -2083,7 +2127,7 @@ export default {
      "ex": {
       "c3sql": 1,
       "dinsql": 1,
-      "finsql": 0,
+      "finsql": 1,
       "unisar": 0
      }
     },
@@ -2092,8 +2136,8 @@ export default {
      "hardness": "hard",
      "ex": {
       "c3sql": 1,
-      "dinsql": 0,
-      "finsql": 0,
+      "dinsql": 1,
+      "finsql": 1,
       "unisar": 0
      }
     },
@@ -2103,7 +2147,7 @@ export default {
      "ex": {
       "c3sql": 1,
       "dinsql": 1,
-      "finsql": 0,
+      "finsql": 1,
       "unisar": 0
      }
     },
@@ -2113,7 +2157,7 @@ export default {
      "ex": {
       "c3sql": 1,
       "dinsql": 1,
-      "finsql": 0,
+      "finsql": 1,
       "unisar": 0
      }
     },
@@ -2132,8 +2176,8 @@ export default {
      "hardness": "medium",
      "ex": {
       "c3sql": 1,
-      "dinsql": 0,
-      "finsql": 1,
+      "dinsql": 1,
+      "finsql": 0,
       "unisar": 0
      }
     },
@@ -2142,7 +2186,7 @@ export default {
      "hardness": "medium",
      "ex": {
       "c3sql": 1,
-      "dinsql": 1,
+      "dinsql": 0,
       "finsql": 0,
       "unisar": 0
      }
@@ -2163,7 +2207,7 @@ export default {
      "ex": {
       "c3sql": 0,
       "dinsql": 1,
-      "finsql": 0,
+      "finsql": 1,
       "unisar": 0
      }
     },
@@ -2183,7 +2227,7 @@ export default {
      "ex": {
       "c3sql": 0,
       "dinsql": 0,
-      "finsql": 0,
+      "finsql": 1,
       "unisar": 0
      }
     },
@@ -2193,7 +2237,7 @@ export default {
      "ex": {
       "c3sql": 0,
       "dinsql": 0,
-      "finsql": 0,
+      "finsql": 1,
       "unisar": 0
      }
     },
@@ -2223,7 +2267,7 @@ export default {
      "ex": {
       "c3sql": 1,
       "dinsql": 1,
-      "finsql": 0,
+      "finsql": 1,
       "unisar": 0
      }
     },
@@ -2252,7 +2296,7 @@ export default {
      "hardness": "hard",
      "ex": {
       "c3sql": 1,
-      "dinsql": 0,
+      "dinsql": 1,
       "finsql": 0,
       "unisar": 0
      }
@@ -2263,7 +2307,7 @@ export default {
      "ex": {
       "c3sql": 1,
       "dinsql": 1,
-      "finsql": 0,
+      "finsql": 1,
       "unisar": 0
      }
     },
@@ -2292,7 +2336,7 @@ export default {
      "hardness": "easy",
      "ex": {
       "c3sql": 1,
-      "dinsql": 0,
+      "dinsql": 1,
       "finsql": 1,
       "unisar": 1
      }
@@ -2303,7 +2347,7 @@ export default {
      "ex": {
       "c3sql": 1,
       "dinsql": 1,
-      "finsql": 1,
+      "finsql": 0,
       "unisar": 0
      }
     },
